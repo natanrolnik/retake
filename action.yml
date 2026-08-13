@@ -83,8 +83,11 @@ runs:
       shell: bash
       run: |
         echo "sha=$(git -C .flexview-tool rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-        # The binary is toolchain specific, so a Swift upgrade must miss the cache.
-        echo "swift=$(swiftc --version | head -1 | tr -cd '[:alnum:].' )" >> "$GITHUB_OUTPUT"
+        # The binary is toolchain specific, so a Swift upgrade must miss the cache. Keyed
+        # on the selected Xcode rather than `swiftc --version`: the first invocation of a
+        # Swift tool on a fresh runner triggers Xcode's first-launch setup, which took
+        # minutes and is pure latency this early in the job. The path carries the version.
+        echo "swift=$(xcode-select -p | tr -cd '[:alnum:].')" >> "$GITHUB_OUTPUT"
 
     # The binary is the thing worth caching: on a hit nothing is compiled at all. Keyed
     # on the exact flexview revision, so a new revision rebuilds and an unchanged one
