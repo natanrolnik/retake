@@ -59,6 +59,18 @@ outputs:
 runs:
   using: composite
   steps:
+    # Booting a simulator on a cold runner takes minutes, and it is the single largest
+    # cost in this job. Started first so it happens while flexview and the project are
+    # still building, rather than in silence after them.
+    - name: Warm the simulator
+      shell: bash
+      run: |
+        DEVICE="${{ inputs.simulator }}"
+        DEVICE="${DEVICE%%,*}"
+        [ -z "$DEVICE" ] && DEVICE="iPhone 17"
+        echo "Booting $DEVICE in the background"
+        xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
+
     - name: Check out flexview
       uses: actions/checkout@v4
       with:
@@ -122,6 +134,14 @@ runs:
           echo "command=tuist" >> "$GITHUB_OUTPUT"
         fi
         tuist version
+
+    # Not a requirement: flexview falls back to a raw xcodebuild log without it.
+    - name: Install xcbeautify
+      shell: bash
+      run: |
+        if ! command -v xcbeautify >/dev/null 2>&1; then
+          brew install xcbeautify || echo "::warning::xcbeautify unavailable; the build log will be verbose."
+        fi
 
     # The base is the expensive half and rarely changes within a pull request, so it is
     # cached on the merge base. Without this every push pays for two full builds.

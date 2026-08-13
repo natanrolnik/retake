@@ -96,6 +96,13 @@ struct Render: AsyncParsableCommand {
     )
     var tuistWorkingDirectory: String?
 
+    @Flag(
+        name: .long,
+        inversion: .prefixedNo,
+        help: "Pipe xcodebuild through xcbeautify when it is available. A full build log buries the few lines worth reading."
+    )
+    var pretty: Bool = true
+
     func validate() throws {
         if workspace != nil, project != nil {
             throw ValidationError("--workspace and --project are mutually exclusive.")
@@ -275,9 +282,10 @@ struct Render: AsyncParsableCommand {
         }
 
         print("flexview: running \(scheme) on \(simulator ?? "the default simulator")")
+        let command = XcodeBuild.command(arguments: arguments + ["test"], pretty: pretty)
         let result = try Shell.run(
-            "/usr/bin/xcodebuild",
-            arguments + ["test"],
+            command.executable,
+            command.arguments,
             environment: environment,
             streamOutput: true,
             timeout: TimeInterval(timeout)

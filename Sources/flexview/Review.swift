@@ -194,7 +194,7 @@ struct Review: AsyncParsableCommand {
         ]
         if let verifySnapshots { diffArguments += ["--verify", verifySnapshots.path] }
 
-        var diff = try Diff.parse(diffArguments)
+        let diff = try Diff.parse(diffArguments)
         try await diff.run()
     }
 
@@ -220,7 +220,7 @@ struct Review: AsyncParsableCommand {
         if let snapshotPreviews { arguments += ["--snapshot-previews", snapshotPreviews] }
         if !modules.isEmpty { arguments += ["--modules"] + modules }
 
-        var render = try Render.parse(arguments)
+        let render = try Render.parse(arguments)
         try await render.run()
     }
 
