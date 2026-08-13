@@ -75,7 +75,14 @@ struct Review: AsyncParsableCommand {
     var settle: Bool = false
 
     func run() async throws {
-        let repoRoot = try git(["rev-parse", "--show-toplevel"], in: repo)
+        // The Tuist project and the git repository are not always the same directory:
+        // a repo can hold the project in a subdirectory. Git operations need the
+        // repository root, Tuist needs the project directory.
+        let projectDirectory = URL(fileURLWithPath: repo).standardizedFileURL
+        let repoRoot = try git(["rev-parse", "--show-toplevel"], in: projectDirectory.path)
+        let projectSubpath = projectDirectory.path == repoRoot
+            ? ""
+            : String(projectDirectory.path.dropFirst(repoRoot.count + 1))
         let outputDirectory = URL(fileURLWithPath: out)
         let baseSnapshots = outputDirectory.appendingPathComponent("base")
         let headSnapshots = outputDirectory.appendingPathComponent("head")
@@ -97,7 +104,7 @@ struct Review: AsyncParsableCommand {
         }
         print("flexview: \(changedFiles.count) changed file\(changedFiles.count == 1 ? "" : "s")")
 
-        let headGraph = try graph(of: repoRoot, label: "head")
+        let headGraph = try graph(of: projectDirectory.path, label: "head")
 
         let renderedModules: [String]
         if modules.isEmpty {
@@ -142,20 +149,25 @@ struct Review: AsyncParsableCommand {
         }
 
         if needsBase {
+            // The same subdirectory, inside the worktree.
+            let baseProject = projectSubpath.isEmpty
+                ? worktree
+                : worktree.appendingPathComponent(projectSubpath)
+
             // Only when the repository actually declares external dependencies: with no
             // Tuist/Package.swift there is nothing to resolve, and Tuist treats being
             // asked as an error.
             if FileManager.default.fileExists(
-                atPath: worktree.appendingPathComponent("Tuist/Package.swift").path
+                atPath: baseProject.appendingPathComponent("Tuist/Package.swift").path
             ) {
                 print("flexview: resolving dependencies in the worktree")
                 _ = try Shell.runChecked(
                     "/usr/bin/env",
                     ["tuist", "install"],
-                    currentDirectory: worktree
+                    currentDirectory: baseProject
                 )
             }
-            let baseGraph = try graph(of: worktree.path, label: "base")
+            let baseGraph = try graph(of: baseProject.path, label: "base")
             try await render(graph: baseGraph, modules: renderedModules, out: baseSnapshots, label: "base")
         }
 
