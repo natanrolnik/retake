@@ -49,5 +49,21 @@ let project = Project(
                 .external(name: "FlexViewRuntime"),
             ]
         ),
+        // The iOS equivalent of PreviewRunner. iOS has no host-side renderer, so previews
+        // are rendered by an XCTest bundle running inside the simulator.
+        .target(
+            name: "PreviewSnapshotTests",
+            destinations: [.iPhone],
+            product: .unitTests,
+            bundleId: "dev.flexview.sampleapp.previewsnapshottests",
+            deploymentTargets: .iOS("17.0"),
+            sources: ["Sources/PreviewSnapshotTests/**"],
+            dependencies: [
+                .target(name: "App"),
+                .target(name: "DesignSystem"),
+                .target(name: "Feature"),
+                .external(name: "FlexViewTestRuntime"),
+            ]
+        ),
     ]
 )

@@ -3,11 +3,16 @@ import PackageDescription
 
 let package = Package(
     name: "flexview",
-    platforms: [.macOS(.v14)],
+    // iOS 17 / macOS 14 is the floor for the #Preview macro, whose runtime metadata is
+    // the only source of a per-preview file path.
+    platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .executable(name: "flexview", targets: ["flexview"]),
-        // Linked into the host repo's snapshot runner target (macOS executable or iOS XCTest bundle).
+        // Linked into the host repo's macOS runner app.
         .library(name: "FlexViewRuntime", targets: ["FlexViewRuntime"]),
+        // Linked into the host repo's iOS XCTest target. Split out so XCTest never
+        // reaches an app target.
+        .library(name: "FlexViewTestRuntime", targets: ["FlexViewTestRuntime"]),
         .library(name: "FlexViewCore", targets: ["FlexViewCore"]),
     ],
     dependencies: [
@@ -32,6 +37,14 @@ let package = Package(
             name: "FlexViewRuntime",
             dependencies: [
                 "FlexViewCore",
+                .product(name: "SnapshotPreviewsCore", package: "SnapshotPreviews-iOS"),
+            ]
+        ),
+        .target(
+            name: "FlexViewTestRuntime",
+            dependencies: [
+                "FlexViewCore",
+                "FlexViewRuntime",
                 .product(name: "SnapshotPreviewsCore", package: "SnapshotPreviews-iOS"),
             ]
         ),

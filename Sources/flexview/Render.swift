@@ -54,31 +54,57 @@ struct Render: AsyncParsableCommand {
     @Option(name: .long, help: "Seconds to wait for the runner before giving up.")
     var timeout: Int = 600
 
+    @Option(
+        name: .long,
+        help: "Simulator to render on, as 'name,OS' (iOS only), e.g. 'iPhone 16,18.2'."
+    )
+    var simulator: String?
+
     func validate() throws {
-        guard platform == .macos else {
-            throw ValidationError("--platform ios is not implemented yet; only macos renders today.")
-        }
-        switch (runner, scheme) {
-        case (nil, nil):
-            throw ValidationError("Pass either --runner <path> or --scheme <name>.")
-        case (.some, .some):
-            throw ValidationError("--runner and --scheme are mutually exclusive.")
-        default:
-            break
-        }
         if workspace != nil, project != nil {
             throw ValidationError("--workspace and --project are mutually exclusive.")
+        }
+
+        switch platform {
+        case .macos:
+            switch (runner, scheme) {
+            case (nil, nil):
+                throw ValidationError("Pass either --runner <path> or --scheme <name>.")
+            case (.some, .some):
+                throw ValidationError("--runner and --scheme are mutually exclusive.")
+            default:
+                break
+            }
+        case .ios:
+            // iOS has no host-side renderer: previews are rendered by an XCTest bundle
+            // inside the simulator, so there is no prebuilt binary to point at.
+            guard runner == nil else {
+                throw ValidationError("--runner applies to --platform macos only; use --scheme for iOS.")
+            }
+            guard scheme != nil else {
+                throw ValidationError("--platform ios needs --scheme <name> of the snapshot test target.")
+            }
+            guard workspace != nil || project != nil else {
+                throw ValidationError("--platform ios needs --workspace or --project.")
+            }
         }
     }
 
     func run() async throws {
+        switch platform {
+        case .macos: try runOnHost()
+        case .ios: try runInSimulator()
+        }
+    }
+
+    private func runOnHost() throws {
         let outputDirectory = URL(fileURLWithPath: out)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
         let executable = if let runner {
             URL(fileURLWithPath: runner)
         } else {
-            try buildRunner()
+            try buildRunnerExecutable()
         }
 
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
@@ -117,7 +143,72 @@ struct Render: AsyncParsableCommand {
         }
     }
 
-    private func buildRunner() throws -> URL {
+    /// Drives `xcodebuild test`, which builds the snapshot test target, boots the
+    /// simulator, and runs the render pass inside it.
+    private func runInSimulator() throws {
+        guard let scheme else { throw RenderError.missingScheme }
+
+        let outputDirectory = URL(fileURLWithPath: out)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        // The manifest is how success is judged, so never let a stale one look like a
+        // fresh render.
+        try? FileManager.default.removeItem(at: outputDirectory.appendingPathComponent(Manifest.fileName))
+
+        var arguments = ["-scheme", scheme, "-configuration", configuration]
+        if let workspace { arguments += ["-workspace", workspace] }
+        if let project { arguments += ["-project", project] }
+        if let derivedData { arguments += ["-derivedDataPath", derivedData] }
+        arguments += ["-destination", Self.destination(for: simulator)]
+
+        // xcodebuild forwards TEST_RUNNER_-prefixed variables from its own environment
+        // into the test process with the prefix stripped. They must be environment
+        // entries, not command line arguments: as arguments xcodebuild would read them
+        // as build setting overrides and never pass them on. This is how a host path
+        // reaches code running inside the simulator.
+        var environment = ProcessInfo.processInfo.environment
+        environment["TEST_RUNNER_\(RunnerEnvironment.output)"] = outputDirectory.path
+        environment["TEST_RUNNER_\(RunnerEnvironment.appearance)"] = appearance.rawValue
+        if !modules.isEmpty {
+            environment["TEST_RUNNER_\(RunnerEnvironment.modules)"] = modules.joined(separator: ",")
+        }
+
+        print("flexview: running \(scheme) on \(simulator ?? "the default simulator")")
+        let result = try Shell.run(
+            "/usr/bin/xcodebuild",
+            arguments + ["test"],
+            environment: environment,
+            streamOutput: true,
+            timeout: TimeInterval(timeout)
+        )
+        guard !result.timedOut else { throw RenderError.runnerTimedOut(seconds: timeout) }
+
+        // The manifest, not the exit code, decides: xcodebuild reports failure when any
+        // preview failed to render, and those are recorded rather than fatal.
+        guard FileManager.default.fileExists(
+            atPath: outputDirectory.appendingPathComponent(Manifest.fileName).path
+        ) else {
+            throw RenderError.runnerFailed(exitCode: result.exitCode)
+        }
+
+        try report(outputDirectory: outputDirectory)
+    }
+
+    private static func destination(for simulator: String?) -> String {
+        guard let simulator else { return "platform=iOS Simulator,name=iPhone 16" }
+        let parts = simulator.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count > 1 else { return "platform=iOS Simulator,name=\(parts[0])" }
+        return "platform=iOS Simulator,name=\(parts[0]),OS=\(parts[1])"
+    }
+
+    private func report(outputDirectory: URL) throws {
+        let manifest = try Manifest.read(from: outputDirectory)
+        print("flexview: \(manifest.entries.count) previews rendered, \(manifest.failures.count) failed")
+        for failure in manifest.failures {
+            print("  failed: \(failure.previewID) — \(failure.message)")
+        }
+    }
+
+    private func buildRunnerExecutable() throws -> URL {
         guard let scheme else { throw RenderError.missingScheme }
 
         var arguments = ["-scheme", scheme, "-configuration", configuration, "-destination", "platform=macOS"]
