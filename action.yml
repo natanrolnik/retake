@@ -51,12 +51,20 @@ inputs:
     description: Key prefix for everything flexview uploads.
     required: false
     default: 'flexview'
+  s3-url-mode:
+    description: How uploaded objects are addressed. public = world readable bucket URL; cdn = served through s3-public-base-url; presigned = bucket stays private and each URL carries a time-limited signature.
+    required: false
+    default: 'public'
+  s3-presign-expires:
+    description: Lifetime of presigned URLs in seconds, with s3-url-mode presigned. AWS caps this at 7 days, after which images in older comments stop loading.
+    required: false
+    default: '86400'
   s3-endpoint:
     description: Endpoint for an S3-compatible service. Omit for AWS.
     required: false
     default: ''
   s3-public-base-url:
-    description: Base URL objects are served from, when that differs from the bucket URL (a CDN or custom domain).
+    description: Base URL objects are served from with s3-url-mode cdn (a CDN or custom domain in front of the bucket).
     required: false
     default: ''
   comment:
@@ -220,6 +228,8 @@ runs:
             --repository "$GITHUB_REPOSITORY"
             --commit "${{ github.event.pull_request.head.sha }}"
             --html "$OUT/report.html"
+            --url-mode "${{ inputs.s3-url-mode }}"
+            --presign-expires "${{ inputs.s3-presign-expires }}"
           )
           [ -n "${{ github.event.pull_request.number }}" ] && PUBLISH+=(--pr "${{ github.event.pull_request.number }}")
           [ -n "${{ inputs.s3-endpoint }}" ] && PUBLISH+=(--endpoint "${{ inputs.s3-endpoint }}")

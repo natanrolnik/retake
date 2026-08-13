@@ -79,6 +79,56 @@ struct S3 {
         return url
     }
 
+    /// A time-limited GET URL, signed into the query string.
+    ///
+    /// Lets a bucket stay entirely private: the URL carries its own authorisation, which
+    /// is what makes it renderable in a pull request comment. SigV4 caps the lifetime at
+    /// seven days, after which the images in an old comment stop loading.
+    func presignedURL(for key: String, expiresIn seconds: Int) -> URL {
+        let url = objectURL(for: key)
+        let timestamp = Self.timestampFormatter.string(from: Date())
+        let day = String(timestamp.prefix(8))
+        let scope = "\(day)/\(region)/s3/aws4_request"
+        let host = url.host!
+
+        var query: [(String, String)] = [
+            ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
+            ("X-Amz-Credential", "\(accessKeyID)/\(scope)"),
+            ("X-Amz-Date", timestamp),
+            ("X-Amz-Expires", String(seconds)),
+            ("X-Amz-SignedHeaders", "host"),
+        ]
+        if let sessionToken { query.append(("X-Amz-Security-Token", sessionToken)) }
+        // Canonical query strings are sorted by encoded key.
+        query.sort { Self.encode($0.0) < Self.encode($1.0) }
+        let canonicalQuery = query
+            .map { "\(Self.encode($0.0))=\(Self.encode($0.1))" }
+            .joined(separator: "&")
+
+        let canonicalRequest = [
+            "GET",
+            Self.encodePath(url.path),
+            canonicalQuery,
+            "host:\(host)\n",
+            "host",
+            // Nothing is being sent, and the body is not part of a presigned GET.
+            "UNSIGNED-PAYLOAD",
+        ].joined(separator: "\n")
+
+        let stringToSign = [
+            "AWS4-HMAC-SHA256",
+            timestamp,
+            scope,
+            Self.hex(SHA256.hash(data: Data(canonicalRequest.utf8))),
+        ].joined(separator: "\n")
+        let signature = Self.hex(HMAC<SHA256>.authenticationCode(
+            for: Data(stringToSign.utf8),
+            using: signingKey(day: day)
+        ))
+
+        return URL(string: url.absoluteString + "?" + canonicalQuery + "&X-Amz-Signature=" + signature)!
+    }
+
     func objectURL(for key: String) -> URL {
         let encoded = key.split(separator: "/", omittingEmptySubsequences: false)
             .map { Self.encode(String($0)) }
@@ -121,9 +171,7 @@ struct S3 {
         let canonicalHeaders = headers.map { "\($0.0):\($0.1.trimmingCharacters(in: .whitespaces))\n" }.joined()
         let canonicalRequest = [
             "PUT",
-            request.url!.path.split(separator: "/", omittingEmptySubsequences: false)
-                .map { Self.encode(String($0)) }
-                .joined(separator: "/"),
+            Self.encodePath(request.url!.path),
             "",
             canonicalHeaders,
             signedHeaders,
@@ -138,11 +186,10 @@ struct S3 {
             Self.hex(SHA256.hash(data: Data(canonicalRequest.utf8))),
         ].joined(separator: "\n")
 
-        var key = SymmetricKey(data: Data("AWS4\(secretAccessKey)".utf8))
-        for component in [day, region, "s3", "aws4_request"] {
-            key = SymmetricKey(data: Data(HMAC<SHA256>.authenticationCode(for: Data(component.utf8), using: key)))
-        }
-        let signature = Self.hex(HMAC<SHA256>.authenticationCode(for: Data(stringToSign.utf8), using: key))
+        let signature = Self.hex(HMAC<SHA256>.authenticationCode(
+            for: Data(stringToSign.utf8),
+            using: signingKey(day: day)
+        ))
 
         request.setValue(
             "AWS4-HMAC-SHA256 Credential=\(accessKeyID)/\(scope), "
@@ -151,13 +198,27 @@ struct S3 {
         )
     }
 
+    private func signingKey(day: String) -> SymmetricKey {
+        var key = SymmetricKey(data: Data("AWS4\(secretAccessKey)".utf8))
+        for component in [day, region, "s3", "aws4_request"] {
+            key = SymmetricKey(data: Data(HMAC<SHA256>.authenticationCode(for: Data(component.utf8), using: key)))
+        }
+        return key
+    }
+
+    static func encodePath(_ path: String) -> String {
+        path.split(separator: "/", omittingEmptySubsequences: false)
+            .map { encode(String($0)) }
+            .joined(separator: "/")
+    }
+
     /// RFC 3986 encoding, which is stricter than `addingPercentEncoding` defaults.
-    private static func encode(_ value: String) -> String {
+    static func encode(_ value: String) -> String {
         let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
         return value.addingPercentEncoding(withAllowedCharacters: unreserved) ?? value
     }
 
-    private static func hex(_ digest: some Sequence<UInt8>) -> String {
+    static func hex(_ digest: some Sequence<UInt8>) -> String {
         digest.map { String(format: "%02x", $0) }.joined()
     }
 

@@ -40,12 +40,39 @@ struct Publish: AsyncParsableCommand {
 
     @Option(
         name: .long,
-        help: "Base URL objects are served from, when that differs from the bucket URL (a CDN or custom domain)."
+        help: "How the uploaded objects are addressed: public (bucket URL), cdn (--public-base-url), or presigned (time-limited signed URLs, for a bucket that stays private)."
+    )
+    var urlMode: URLMode = .public
+
+    @Option(
+        name: .long,
+        help: "Base URL objects are served from with --url-mode cdn."
     )
     var publicBaseURL: String?
 
+    @Option(name: .long, help: "Lifetime of presigned URLs in seconds. AWS caps this at 7 days.")
+    var presignExpires: Int = 86_400
+
+    enum URLMode: String, ExpressibleByArgument, CaseIterable {
+        /// Objects are world readable at the bucket URL.
+        case `public`
+        /// Objects are served through a CDN or custom domain in front of the bucket.
+        case cdn
+        /// The bucket stays private and each URL carries its own time-limited signature.
+        case presigned
+    }
+
     @Option(name: .long, help: "Also upload this HTML report.")
     var html: String?
+
+    func validate() throws {
+        if urlMode == .cdn, publicBaseURL?.isEmpty ?? true {
+            throw ValidationError("--url-mode cdn needs --public-base-url.")
+        }
+        if urlMode == .presigned, !(1...604_800).contains(presignExpires) {
+            throw ValidationError("--presign-expires must be between 1 second and 7 days, which is the SigV4 limit.")
+        }
+    }
 
     func run() async throws {
         let reportURL = URL(fileURLWithPath: report)
@@ -112,7 +139,7 @@ struct Publish: AsyncParsableCommand {
                 contentType: "text/html; charset=utf-8",
                 cacheControl: "public, max-age=31536000, immutable"
             )
-            diffReport.reportURL = publicURL(for: naming.reportKey, uploaded: url)
+            diffReport.reportURL = self.url(for: naming.reportKey, uploaded: url, with: s3)
             uploaded += 1
         }
 
@@ -125,17 +152,25 @@ struct Publish: AsyncParsableCommand {
         let data = try Data(contentsOf: file)
         // Immutable: every run writes to a fresh, timestamped prefix, so nothing at a
         // given URL ever changes.
-        let url = try await s3.put(
+        let objectURL = try await s3.put(
             data,
             key: key,
             contentType: "image/png",
             cacheControl: "public, max-age=31536000, immutable"
         )
-        return publicURL(for: key, uploaded: url)
+        return url(for: key, uploaded: objectURL, with: s3)
     }
 
-    private func publicURL(for key: String, uploaded: URL) -> String {
-        guard let publicBaseURL, !publicBaseURL.isEmpty else { return uploaded.absoluteString }
-        return publicBaseURL.hasSuffix("/") ? publicBaseURL + key : publicBaseURL + "/" + key
+    private func url(for key: String, uploaded: URL, with s3: S3) -> String {
+        switch urlMode {
+        case .public:
+            uploaded.absoluteString
+        case .cdn:
+            (publicBaseURL ?? "").hasSuffix("/")
+                ? (publicBaseURL ?? "") + key
+                : (publicBaseURL ?? "") + "/" + key
+        case .presigned:
+            s3.presignedURL(for: key, expiresIn: presignExpires).absoluteString
+        }
     }
 }
