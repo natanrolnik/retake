@@ -79,12 +79,15 @@ public enum ImageComparator {
                 diffPixels[offset + 2] = 255
                 diffPixels[offset + 3] = 255
             } else {
-                // Unchanged area stays as a washed out version of head, for context.
-                for channel in 0..<3 {
-                    let value = Int(headPixels[offset + channel])
-                    diffPixels[offset + channel] = UInt8(255 - (255 - value) / 4)
+                // Unchanged area is kept as faded context. Fading toward transparency
+                // rather than toward white, because washing out a dark interface turns
+                // it into a pale grey slab that reads as a change of its own.
+                //
+                // The buffer is premultiplied, so scaling all four channels equally is
+                // exactly a reduction in alpha.
+                for channel in 0..<4 {
+                    diffPixels[offset + channel] = UInt8(Int(headPixels[offset + channel]) * 7 / 20)
                 }
-                diffPixels[offset + 3] = headPixels[offset + 3]
             }
         }
 
