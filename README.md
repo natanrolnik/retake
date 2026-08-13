@@ -115,6 +115,22 @@ dimensions changed is never suppressed, however few pixels differ.
 Previews that failed to render are reported in their own bucket rather than appearing as
 removals.
 
+## HTML report
+
+```bash
+flexview diff --base ./base --head ./head --out ./report --html report.html
+# or, from an existing report.json
+flexview report --report ./report/report.json --out report.html
+```
+
+One self-contained file: images are inlined as data URIs, so it works as a CI artifact, an
+email attachment, or a local `open`, with no sibling PNG directory and no server. It groups
+previews by module, shows Before / After / Diff side by side, renders new previews as a
+single image, and follows the reader's light or dark mode.
+
+`--no-inline-images` links to the PNGs on disk instead, for when file size matters more
+than portability. `--include-unchanged` adds the previews that did not move.
+
 ## Preview identity
 
 Comparing two renders needs an ID that survives unrelated edits. The runtime offers two

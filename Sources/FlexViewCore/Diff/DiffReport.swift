@@ -71,6 +71,10 @@ public struct DiffReport: Codable, Sendable {
 
     public var version: Int
     public var tolerance: Double
+    /// Absolute directories the PNG paths resolve against, so a report is enough on its
+    /// own to locate every image.
+    public var baseDirectory: String?
+    public var headDirectory: String?
     public var previews: [PreviewDiff]
     /// Previews that failed to render on either side. Surfaced separately so a broken
     /// preview is never reported as removed.
@@ -79,11 +83,15 @@ public struct DiffReport: Codable, Sendable {
     public init(
         version: Int = DiffReport.currentVersion,
         tolerance: Double,
+        baseDirectory: String? = nil,
+        headDirectory: String? = nil,
         previews: [PreviewDiff],
         failures: [ManifestFailure] = []
     ) {
         self.version = version
         self.tolerance = tolerance
+        self.baseDirectory = baseDirectory
+        self.headDirectory = headDirectory
         self.previews = previews.sorted { $0.previewID < $1.previewID }
         self.failures = failures.sorted { $0.previewID < $1.previewID }
     }

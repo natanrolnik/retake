@@ -35,6 +35,9 @@ struct Diff: AsyncParsableCommand {
     )
     var pixelThreshold: Int = 0
 
+    @Option(name: .long, help: "Also write a self-contained HTML report to this path.")
+    var html: String?
+
     func validate() throws {
         guard (0...100).contains(tolerance) else {
             throw ValidationError("--tolerance must be a percentage between 0 and 100.")
@@ -87,10 +90,23 @@ struct Diff: AsyncParsableCommand {
 
         let report = DiffReport(
             tolerance: tolerance,
+            baseDirectory: baseDirectory.standardizedFileURL.path,
+            headDirectory: headDirectory.standardizedFileURL.path,
             previews: previews,
             failures: baseManifest.failures + headManifest.failures
         )
         try report.write(to: outputDirectory.appendingPathComponent(DiffReport.fileName))
+
+        if let html {
+            let htmlURL = URL(fileURLWithPath: html)
+            let rendered = HTMLReport.render(
+                report: report,
+                diffDirectory: outputDirectory,
+                options: HTMLReport.Options(inlineImages: true)
+            )
+            try Data(rendered.utf8).write(to: htmlURL)
+            print("flexview: wrote \(htmlURL.path)")
+        }
 
         print("flexview: \(report.summary.headline)")
         for diff in report.previews where diff.change != .unchanged {
