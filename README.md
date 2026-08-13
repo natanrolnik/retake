@@ -9,8 +9,8 @@ diff touches from file ownership. That is the only way to catch previews in *dow
 modules: change a button in a design-system module and every screen that consumes it
 changes too, without any of those files appearing in the diff.
 
-Status: Phase 1 (rendering) is usable locally on macOS. Diffing, publishing, PR comments
-and CI are not built yet.
+Status: rendering and diffing are usable locally on macOS. Scoping, publishing, PR
+comments and CI are not built yet.
 
 ## Requirements
 
@@ -82,6 +82,38 @@ Useful options:
 
 Previews that fail to render are recorded in `manifest.json` under `failures` rather than
 being dropped, so a render failure can never be mistaken for a deleted preview later.
+
+## Diffing
+
+```bash
+flexview diff --base ./snapshots-base --head ./snapshots-head --out ./report
+```
+
+Every preview lands in exactly one of four buckets:
+
+| Bucket | Meaning | In the comment |
+| --- | --- | --- |
+| `added` | Head only. There is no "before". | One image, labelled *New preview* |
+| `removed` | Base only. Catches accidental deletions. | The base image |
+| `changed` | Both sides, pixels differ | Before, After, Diff |
+| `unchanged` | Identical, or below the tolerance | Excluded |
+
+Entries with matching SHA-256 settle without any per-pixel work; only the rest are
+compared pixel by pixel. Changed previews get a third *diff* image, magenta over a washed
+out copy of the head render, plus a changed-pixel percentage.
+
+Two knobs absorb renderer nondeterminism:
+
+- `--pixel-threshold <0-255>` — per-channel delta below which two pixels count as equal.
+- `--tolerance <percent>` — changed-pixel percentage at or below which a preview is filed
+  as unchanged.
+
+Anything the tolerance suppresses is printed and flagged in `report.json` with
+`suppressedByTolerance`, so threshold truncation is never silent. A preview whose
+dimensions changed is never suppressed, however few pixels differ.
+
+Previews that failed to render are reported in their own bucket rather than appearing as
+removals.
 
 ## Preview identity
 
