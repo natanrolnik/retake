@@ -213,6 +213,9 @@ struct Review: AsyncParsableCommand {
         if let simulator { arguments += ["--simulator", simulator] }
         if settle { arguments += ["--settle"] }
         arguments += ["--tuist", tuist]
+        // The base renders from a worktree, which has no version manager config, so
+        // Tuist is always launched from the project under review.
+        arguments += ["--tuist-working-directory", URL(fileURLWithPath: repo).standardizedFileURL.path]
         if let runtimeSources { arguments += ["--runtime-sources", runtimeSources] }
         if let snapshotPreviews { arguments += ["--snapshot-previews", snapshotPreviews] }
         if !modules.isEmpty { arguments += ["--modules"] + modules }

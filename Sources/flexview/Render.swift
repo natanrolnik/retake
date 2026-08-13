@@ -90,6 +90,12 @@ struct Render: AsyncParsableCommand {
     @Option(name: .long, help: "Tuist executable. Pass an absolute path to bypass a version manager shim.")
     var tuist: String = "tuist"
 
+    @Option(
+        name: .long,
+        help: "Directory to launch Tuist from. Defaults to the project being rendered; set it when that project is a worktree with no version manager config."
+    )
+    var tuistWorkingDirectory: String?
+
     func validate() throws {
         if workspace != nil, project != nil {
             throw ValidationError("--workspace and --project are mutually exclusive.")
@@ -217,9 +223,11 @@ struct Render: AsyncParsableCommand {
         }
 
         print("flexview: generating host project in \(hostProject.scratchDirectory.lastPathComponent)")
-        // Launched from the Tuist root rather than the scratch directory: inside a
-        // worktree a version manager shim has no config to resolve from.
-        try Tuist(command: tuist, workingDirectory: root)
+        // Launched from the Tuist root rather than the scratch directory, and from the
+        // caller's directory when given: inside a worktree a version manager shim has
+        // no config to resolve a version from.
+        let launchDirectory = tuistWorkingDirectory.map { URL(fileURLWithPath: $0) } ?? root
+        try Tuist(command: tuist, workingDirectory: launchDirectory)
             .run(["generate", "--no-open"], at: hostProject.scratchDirectory)
 
         try runXcodeBuildTest(
