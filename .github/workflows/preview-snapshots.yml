@@ -27,6 +27,10 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      # The action requires Tuist rather than installing it, so that the version stays
+      # the one this repository pins.
+      - uses: jdx/mise-action@v2
+
       - uses: ./
         with:
           # Build the tool from this pull request rather than from main, so a change to

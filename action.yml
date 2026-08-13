@@ -102,12 +102,17 @@ runs:
       working-directory: .flexview-tool
       run: swift build -c release --product flexview
 
-    - name: Install Tuist
+    # Deliberately not installed here. The repository pins its own Tuist version, and a
+    # different one can produce a graph that disagrees with the project, so the caller
+    # installs it the same way it does for every other job.
+    - name: Check for Tuist
       shell: bash
       run: |
         if ! command -v tuist >/dev/null 2>&1; then
-          curl -Ls https://install.tuist.io | bash
+          echo "::error::tuist is not on PATH. Install it before this step, for example with jdx/mise-action or tuist/setup-tuist, using the version this repository pins."
+          exit 1
         fi
+        tuist version
 
     # The base is the expensive half and rarely changes within a pull request, so it is
     # cached on the merge base. Without this every push pays for two full builds.
