@@ -1,18 +1,4 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-#if TUIST
-import struct ProjectDescription.PackageSettings
-
-let packageSettings = PackageSettings(
-    productTypes: ["FlexViewRuntime": .framework]
-)
-#endif
-
-let package = Package(
-    name: "SampleAppDependencies",
-    dependencies: [
-        // The flexview package at the root of this repo.
-        .package(path: "../../..")
-    ]
-)
+let package = Package(name: "SampleAppDependencies")

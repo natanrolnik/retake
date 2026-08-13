@@ -48,6 +48,8 @@ public struct TargetGraph: Sendable {
         public var id: TargetID
         /// The module name previews report. Not always equal to the target name.
         public var productName: String
+        /// Tuist's product kind, e.g. "app", "framework", "staticFramework", "unitTests".
+        public var product: String = ""
         /// Explicit sources plus the files a buildable folder currently resolves to.
         public var sources: [String]
         public var resources: [String]
@@ -56,12 +58,14 @@ public struct TargetGraph: Sendable {
         public init(
             id: TargetID,
             productName: String,
+            product: String = "",
             sources: [String],
             resources: [String],
             buildableFolders: [BuildableFolder] = []
         ) {
             self.id = id
             self.productName = productName
+            self.product = product
             self.sources = sources
             self.resources = resources
             self.buildableFolders = buildableFolders
@@ -115,6 +119,15 @@ public struct TargetGraph: Sendable {
     /// Maps an absolute file path to the target that compiles or bundles it.
     public func owner(ofFile path: String) -> TargetID? {
         targets.values.first { $0.owns(path) }?.id
+    }
+
+    /// Only an app can host a test bundle that renders previews.
+    public func isApp(_ id: TargetID) -> Bool {
+        targets[id]?.product == "app"
+    }
+
+    public func isTestBundle(_ id: TargetID) -> Bool {
+        ["unitTests", "uiTests"].contains(targets[id]?.product ?? "")
     }
 
     public var sourcesByModule: [String: [String]] {

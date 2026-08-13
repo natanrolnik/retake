@@ -60,6 +60,27 @@ struct Render: AsyncParsableCommand {
     )
     var simulator: String?
 
+    @Option(
+        name: .long,
+        help: "Tuist graph JSON. With this, flexview generates its own throwaway host project instead of needing a snapshot target in the repo."
+    )
+    var graph: String?
+
+    @Option(name: .long, help: "Target to host the previews. Chosen from the graph when omitted.")
+    var host: String?
+
+    @Option(name: .long, help: "Path to the flexview checkout, if it cannot be inferred.")
+    var runtimeSources: String?
+
+    @Option(name: .long, help: "Path to the SnapshotPreviews checkout, if it cannot be inferred.")
+    var snapshotPreviews: String?
+
+    @Option(name: .long, help: "Keep the generated host project instead of deleting it.")
+    var keepHostProject: Bool = false
+
+    @Option(name: .long, help: "iOS deployment target for the generated host project.")
+    var deploymentTarget: String = "17.0"
+
     func validate() throws {
         if workspace != nil, project != nil {
             throw ValidationError("--workspace and --project are mutually exclusive.")
@@ -79,13 +100,18 @@ struct Render: AsyncParsableCommand {
             // iOS has no host-side renderer: previews are rendered by an XCTest bundle
             // inside the simulator, so there is no prebuilt binary to point at.
             guard runner == nil else {
-                throw ValidationError("--runner applies to --platform macos only; use --scheme for iOS.")
+                throw ValidationError("--runner applies to --platform macos only; use --graph or --scheme for iOS.")
             }
-            guard scheme != nil else {
-                throw ValidationError("--platform ios needs --scheme <name> of the snapshot test target.")
-            }
-            guard workspace != nil || project != nil else {
-                throw ValidationError("--platform ios needs --workspace or --project.")
+            if graph == nil {
+                guard scheme != nil else {
+                    throw ValidationError(
+                        "--platform ios needs either --graph <tuist graph json> to generate a host project, "
+                            + "or --scheme <name> of a snapshot target you maintain."
+                    )
+                }
+                guard workspace != nil || project != nil else {
+                    throw ValidationError("--scheme needs --workspace or --project.")
+                }
             }
         }
     }
@@ -93,7 +119,7 @@ struct Render: AsyncParsableCommand {
     func run() async throws {
         switch platform {
         case .macos: try runOnHost()
-        case .ios: try runInSimulator()
+        case .ios: graph == nil ? try runInSimulator() : try runWithGeneratedHost()
         }
     }
 
@@ -143,11 +169,67 @@ struct Render: AsyncParsableCommand {
         }
     }
 
+    /// Generates a throwaway Tuist project that hosts the previews, renders through it,
+    /// and removes it. The repository's own manifests are never modified.
+    private func runWithGeneratedHost() throws {
+        guard let graph else { throw RenderError.missingScheme }
+
+        let targetGraph = try TuistGraphParser.parse(contentsOf: URL(fileURLWithPath: graph))
+        let sources = try RuntimeSources.resolve(
+            flexviewRoot: runtimeSources,
+            snapshotPreviewsRoot: snapshotPreviews
+        )
+
+        let selection = try HostSelector.select(
+            graph: targetGraph,
+            modules: modules,
+            explicitHost: host
+        )
+        print("flexview: \(selection.explanation)")
+
+        // Inside the Tuist root so the generated project inherits the repo's config and
+        // ProjectDescriptionHelpers, which targets it links by path depend on.
+        let root = URL(fileURLWithPath: selection.tuistRoot)
+        let hostProject = HostProject(
+            scratchDirectory: root.appendingPathComponent(".flexview-host"),
+            host: selection.host,
+            sources: sources,
+            deploymentTarget: deploymentTarget
+        )
+
+        try hostProject.write()
+        defer {
+            if keepHostProject {
+                print("flexview: kept generated project at \(hostProject.scratchDirectory.path)")
+            } else {
+                hostProject.remove()
+            }
+        }
+
+        print("flexview: generating host project in \(hostProject.scratchDirectory.lastPathComponent)")
+        _ = try Shell.runChecked(
+            "/usr/bin/env",
+            ["tuist", "generate", "--no-open"],
+            currentDirectory: hostProject.scratchDirectory,
+            streamOutput: false
+        )
+
+        try runXcodeBuildTest(
+            scheme: HostProject.schemeName,
+            workspace: hostProject.scratchDirectory
+                .appendingPathComponent("\(HostProject.projectName).xcworkspace").path,
+            project: nil
+        )
+    }
+
     /// Drives `xcodebuild test`, which builds the snapshot test target, boots the
     /// simulator, and runs the render pass inside it.
     private func runInSimulator() throws {
         guard let scheme else { throw RenderError.missingScheme }
+        try runXcodeBuildTest(scheme: scheme, workspace: workspace, project: project)
+    }
 
+    private func runXcodeBuildTest(scheme: String, workspace: String?, project: String?) throws {
         let outputDirectory = URL(fileURLWithPath: out)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         // The manifest is how success is judged, so never let a stale one look like a
@@ -159,6 +241,9 @@ struct Render: AsyncParsableCommand {
         if let project { arguments += ["-project", project] }
         if let derivedData { arguments += ["-derivedDataPath", derivedData] }
         arguments += ["-destination", Self.destination(for: simulator)]
+        // Signing a throwaway host for the simulator is pointless and fails on machines
+        // with no development identity.
+        arguments += ["CODE_SIGNING_ALLOWED=NO"]
 
         // xcodebuild forwards TEST_RUNNER_-prefixed variables from its own environment
         // into the test process with the prefix stripped. They must be environment

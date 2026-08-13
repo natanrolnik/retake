@@ -32,38 +32,5 @@ let project = Project(
             sources: ["Sources/App/**"],
             dependencies: [.target(name: "Feature")]
         ),
-        // The snapshot runner. A macOS app rather than a command line tool so Xcode
-        // embeds and re-signs the SnapshotPreviews framework with a matching identity;
-        // an ad-hoc signed loose binary trips macOS library validation.
-        .target(
-            name: "PreviewRunner",
-            destinations: [.mac],
-            product: .app,
-            bundleId: "dev.flexview.sampleapp.previewrunner",
-            deploymentTargets: .macOS("14.0"),
-            infoPlist: .extendingDefault(with: ["LSUIElement": true]),
-            sources: ["Sources/PreviewRunner/**"],
-            dependencies: [
-                .target(name: "DesignSystem"),
-                .target(name: "Feature"),
-                .external(name: "FlexViewRuntime"),
-            ]
-        ),
-        // The iOS equivalent of PreviewRunner. iOS has no host-side renderer, so previews
-        // are rendered by an XCTest bundle running inside the simulator.
-        .target(
-            name: "PreviewSnapshotTests",
-            destinations: [.iPhone],
-            product: .unitTests,
-            bundleId: "dev.flexview.sampleapp.previewsnapshottests",
-            deploymentTargets: .iOS("17.0"),
-            sources: ["Sources/PreviewSnapshotTests/**"],
-            dependencies: [
-                .target(name: "App"),
-                .target(name: "DesignSystem"),
-                .target(name: "Feature"),
-                .external(name: "FlexViewTestRuntime"),
-            ]
-        ),
     ]
 )

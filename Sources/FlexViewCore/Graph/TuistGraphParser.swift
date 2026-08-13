@@ -65,6 +65,7 @@ public enum TuistGraphParser {
                 targets[id] = TargetGraph.Target(
                     id: id,
                     productName: target["productName"] as? String ?? name,
+                    product: target["product"] as? String ?? "",
                     // A buildable folder reports its current membership in resolvedFiles;
                     // the folder root additionally claims files added later.
                     sources: paths(in: target["sources"]) + folders.flatMap(\.resolvedFiles),
