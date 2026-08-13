@@ -53,8 +53,20 @@ struct Review: AsyncParsableCommand {
     @Option(name: .long, help: "Where to write the HTML report. Defaults to <out>/report.html.")
     var html: String?
 
-    @Option(name: .long, help: "Skip rendering the base if its manifest is already there.")
+    @Flag(name: .long, help: "Skip rendering the base if its manifest is already there.")
     var reuseBase: Bool = false
+
+    @Flag(
+        name: .long,
+        help: "Render head twice and exclude previews that do not reproduce, rather than reporting them as changes."
+    )
+    var verify: Bool = false
+
+    @Option(name: .long, help: "Path to the flexview checkout, if it cannot be inferred.")
+    var runtimeSources: String?
+
+    @Option(name: .long, help: "Path to the SnapshotPreviews checkout, if it cannot be inferred.")
+    var snapshotPreviews: String?
 
     @Option(name: .long, help: "Seconds allowed for each render.")
     var timeout: Int = 1800
@@ -142,14 +154,26 @@ struct Review: AsyncParsableCommand {
 
         try await render(graph: headGraph, modules: renderedModules, out: headSnapshots, label: "head")
 
-        var diff = try Diff.parse([
+        // A second render of the same commit. Anything that differs between the two
+        // cannot be compared against the base at all.
+        var verifySnapshots: URL?
+        if verify {
+            let directory = outputDirectory.appendingPathComponent("head-verify")
+            try await render(graph: headGraph, modules: renderedModules, out: directory, label: "head again")
+            verifySnapshots = directory
+        }
+
+        var diffArguments = [
             "--base", baseSnapshots.path,
             "--head", headSnapshots.path,
             "--out", diffDirectory.path,
             "--tolerance", String(tolerance),
             "--pixel-threshold", String(pixelThreshold),
             "--html", html ?? outputDirectory.appendingPathComponent("report.html").path,
-        ])
+        ]
+        if let verifySnapshots { diffArguments += ["--verify", verifySnapshots.path] }
+
+        var diff = try Diff.parse(diffArguments)
         try await diff.run()
     }
 
@@ -167,6 +191,8 @@ struct Review: AsyncParsableCommand {
         ]
         if let simulator { arguments += ["--simulator", simulator] }
         if settle { arguments += ["--settle"] }
+        if let runtimeSources { arguments += ["--runtime-sources", runtimeSources] }
+        if let snapshotPreviews { arguments += ["--snapshot-previews", snapshotPreviews] }
         if !modules.isEmpty { arguments += ["--modules"] + modules }
 
         var render = try Render.parse(arguments)

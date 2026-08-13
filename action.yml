@@ -1,0 +1,192 @@
+name: flexview preview snapshots
+description: Render the SwiftUI previews a pull request affects, and report what changed visually.
+author: Natan Rolnik
+
+inputs:
+  modules:
+    description: Modules to render, space separated. Derived from the changed files when empty.
+    required: false
+    default: ''
+  simulator:
+    description: Simulator to render on, as 'name,OS'. For example 'iPhone 17,26.0'.
+    required: false
+    default: ''
+  deployment-target:
+    description: iOS deployment target for the generated host project.
+    required: false
+    default: '17.0'
+  settle:
+    description: Wait for asynchronously loaded content before capturing. Slower, but required for previews whose content arrives late.
+    required: false
+    default: 'false'
+  tolerance:
+    description: Changed-pixel percentage at or below which a preview counts as unchanged.
+    required: false
+    default: '0.01'
+  verify:
+    description: Render head twice and exclude previews that do not reproduce.
+    required: false
+    default: 'true'
+  working-directory:
+    description: Path to the Tuist repository to review.
+    required: false
+    default: '.'
+  flexview-ref:
+    description: Ref of the flexview repository to build the tool from.
+    required: false
+    default: 'main'
+  artifact-name:
+    description: Name of the uploaded artifact.
+    required: false
+    default: 'flexview-report'
+  comment:
+    description: Upsert a pull request comment. Skipped automatically when the token cannot write.
+    required: false
+    default: 'true'
+  token:
+    description: Token used to comment. Needs pull-requests write.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  report:
+    description: Path to the generated HTML report.
+    value: ${{ steps.review.outputs.report }}
+  summary:
+    description: One-line summary, e.g. "3 changed · 1 new · 0 removed".
+    value: ${{ steps.review.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out flexview
+      uses: actions/checkout@v4
+      with:
+        repository: natanrolnik/flexview
+        ref: ${{ inputs.flexview-ref }}
+        path: .flexview-tool
+
+    - name: Identify the toolchain and flexview revision
+      id: tool
+      shell: bash
+      run: |
+        echo "sha=$(git -C .flexview-tool rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        # The binary is toolchain specific, so a Swift upgrade must miss the cache.
+        echo "swift=$(swiftc --version | head -1 | tr -cd '[:alnum:].' )" >> "$GITHUB_OUTPUT"
+
+    # The binary is the thing worth caching: on a hit nothing is compiled at all. Keyed
+    # on the exact flexview revision, so a new revision rebuilds and an unchanged one
+    # never does.
+    - name: Restore the flexview binary
+      id: binary-cache
+      uses: actions/cache@v4
+      with:
+        path: .flexview-tool/.build/release/flexview
+        key: flexview-bin-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ steps.tool.outputs.sha }}
+
+    # Only consulted when the binary is missing, to make that rebuild incremental rather
+    # than from scratch.
+    - name: Restore the flexview build directory
+      if: steps.binary-cache.outputs.cache-hit != 'true'
+      uses: actions/cache@v4
+      with:
+        path: .flexview-tool/.build
+        key: flexview-build-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ hashFiles('.flexview-tool/Package.resolved') }}
+        restore-keys: |
+          flexview-build-${{ runner.os }}-${{ steps.tool.outputs.swift }}-
+          flexview-build-${{ runner.os }}-
+
+    - name: Build flexview
+      if: steps.binary-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: .flexview-tool
+      run: swift build -c release --product flexview
+
+    - name: Install Tuist
+      shell: bash
+      run: |
+        if ! command -v tuist >/dev/null 2>&1; then
+          curl -Ls https://install.tuist.io | bash
+        fi
+
+    # The base is the expensive half and rarely changes within a pull request, so it is
+    # cached on the merge base. Without this every push pays for two full builds.
+    - name: Restore the base render
+      id: base-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/flexview/base
+        key: flexview-base-${{ runner.os }}-${{ github.event.pull_request.base.sha }}-${{ inputs.simulator }}-${{ inputs.settle }}
+
+    - name: Render and compare
+      id: review
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        OUT="${{ runner.temp }}/flexview"
+        TOOL="$GITHUB_WORKSPACE/.flexview-tool"
+
+        ARGS=(
+          review
+          --repo .
+          --base "${{ github.event.pull_request.base.sha }}"
+          --out "$OUT"
+          --tolerance "${{ inputs.tolerance }}"
+          --deployment-target "${{ inputs.deployment-target }}"
+          --runtime-sources "$TOOL"
+          --html "$OUT/report.html"
+        )
+        [ -n "${{ inputs.simulator }}" ] && ARGS+=(--simulator "${{ inputs.simulator }}")
+        [ -n "${{ inputs.modules }}" ] && ARGS+=(--modules ${{ inputs.modules }})
+        [ "${{ inputs.settle }}" = "true" ] && ARGS+=(--settle)
+        [ "${{ inputs.verify }}" = "true" ] && ARGS+=(--verify)
+        [ "${{ steps.base-cache.outputs.cache-hit }}" = "true" ] && ARGS+=(--reuse-base)
+
+        "$TOOL/.build/release/flexview" "${ARGS[@]}"
+
+        echo "report=$OUT/report.html" >> "$GITHUB_OUTPUT"
+        "$TOOL/.build/release/flexview" comment \
+          --report "$OUT/diff/report.json" \
+          --artifact-name "${{ inputs.artifact-name }}" \
+          --artifact-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+          --out "$OUT/comment.md"
+
+        # The job summary is the version nobody has to download.
+        cat "$OUT/comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload the report
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          ${{ runner.temp }}/flexview/report.html
+          ${{ runner.temp }}/flexview/diff/report.json
+        if-no-files-found: warn
+
+    # A pull request from a fork gets a read-only token, so commenting would fail. The
+    # artifact and the job summary are still produced, which is why this only skips the
+    # comment rather than failing the job.
+    - name: Comment on the pull request
+      if: >
+        inputs.comment == 'true' &&
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        "$GITHUB_WORKSPACE/.flexview-tool/.build/release/flexview" comment \
+          --report "${{ runner.temp }}/flexview/diff/report.json" \
+          --pr "${{ github.event.pull_request.number }}" \
+          --artifact-name "${{ inputs.artifact-name }}" \
+          --artifact-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+    - name: Note skipped comment
+      if: >
+        inputs.comment == 'true' &&
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name != github.repository
+      shell: bash
+      run: |
+        echo "::notice::Pull requests from forks get a read-only token, so no comment was posted. The report is attached as the '${{ inputs.artifact-name }}' artifact and repeated in this job's summary."

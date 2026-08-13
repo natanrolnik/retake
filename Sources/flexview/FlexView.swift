@@ -12,6 +12,9 @@ struct FlexView: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "flexview",
         abstract: "Render SwiftUI previews and diff them across commits.",
-        subcommands: [Review.self, ScopeCommand.self, Render.self, Diff.self, Report.self, Verify.self]
+        subcommands: [
+            Review.self, ScopeCommand.self, Render.self, Diff.self,
+            Report.self, Comment.self, Verify.self,
+        ]
     )
 }

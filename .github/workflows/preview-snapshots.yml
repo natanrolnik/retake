@@ -1,0 +1,38 @@
+name: Preview snapshots
+
+# Example of consuming the action. Copy this into a repository that uses Tuist and
+# adjust the inputs; nothing else in that repository has to change.
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  # A superseded push has nothing useful left to say, and macOS minutes are expensive.
+  group: preview-snapshots-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  snapshots:
+    runs-on: macos-15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The action diffs against the merge base, so it needs the history to find it.
+          fetch-depth: 0
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: ./
+        with:
+          working-directory: Fixtures/SampleApp
+          simulator: iPhone 17
+          deployment-target: '17.0'
+          # Off by default: it costs about two seconds per preview. Turn it on for
+          # modules whose previews load content asynchronously, which
+          # `flexview verify` will tell you.
+          settle: 'false'
