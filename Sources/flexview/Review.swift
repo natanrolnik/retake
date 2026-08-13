@@ -142,12 +142,19 @@ struct Review: AsyncParsableCommand {
         }
 
         if needsBase {
-            print("flexview: resolving dependencies in the worktree")
-            _ = try Shell.runChecked(
-                "/usr/bin/env",
-                ["tuist", "install"],
-                currentDirectory: worktree
-            )
+            // Only when the repository actually declares external dependencies: with no
+            // Tuist/Package.swift there is nothing to resolve, and Tuist treats being
+            // asked as an error.
+            if FileManager.default.fileExists(
+                atPath: worktree.appendingPathComponent("Tuist/Package.swift").path
+            ) {
+                print("flexview: resolving dependencies in the worktree")
+                _ = try Shell.runChecked(
+                    "/usr/bin/env",
+                    ["tuist", "install"],
+                    currentDirectory: worktree
+                )
+            }
             let baseGraph = try graph(of: worktree.path, label: "base")
             try await render(graph: baseGraph, modules: renderedModules, out: baseSnapshots, label: "base")
         }
