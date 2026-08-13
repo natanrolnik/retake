@@ -39,6 +39,26 @@ inputs:
     description: Name of the uploaded artifact.
     required: false
     default: 'flexview-report'
+  s3-bucket:
+    description: Bucket to upload images to. Without it the report is artifact-only and the comment links to it instead of showing images.
+    required: false
+    default: ''
+  s3-region:
+    description: Region of the bucket.
+    required: false
+    default: 'us-east-1'
+  s3-prefix:
+    description: Key prefix for everything flexview uploads.
+    required: false
+    default: 'flexview'
+  s3-endpoint:
+    description: Endpoint for an S3-compatible service. Omit for AWS.
+    required: false
+    default: ''
+  s3-public-base-url:
+    description: Base URL objects are served from, when that differs from the bucket URL (a CDN or custom domain).
+    required: false
+    default: ''
   comment:
     description: Upsert a pull request comment. Skipped automatically when the token cannot write.
     required: false
@@ -96,7 +116,7 @@ runs:
       id: binary-cache
       uses: actions/cache@v4
       with:
-        path: .flexview-tool/.build/release/flexview
+        path: .flexview-tool/.build/debug/flexview
         key: flexview-bin-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ steps.tool.outputs.sha }}
 
     # Only consulted when the binary is missing, to make that rebuild incremental rather
@@ -115,7 +135,10 @@ runs:
       if: steps.binary-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: .flexview-tool
-      run: swift build -c release --product flexview
+      # Debug, not release: flexview only orchestrates xcodebuild and is I/O bound, so
+      # optimisation buys nothing, while release mode recompiles a whole module for any
+      # changed file and defeats the incremental restore below.
+      run: swift build --product flexview
 
     # Deliberately not installed here. The repository pins its own Tuist version, and a
     # different one can produce a graph that disagrees with the project, so the caller
@@ -181,10 +204,30 @@ runs:
         [ "${{ inputs.verify }}" = "true" ] && ARGS+=(--verify)
         [ "${{ steps.base-cache.outputs.cache-hit }}" = "true" ] && ARGS+=(--reuse-base)
 
-        "$TOOL/.build/release/flexview" "${ARGS[@]}"
+        "$TOOL/.build/debug/flexview" "${ARGS[@]}"
 
         echo "report=$OUT/report.html" >> "$GITHUB_OUTPUT"
-        "$TOOL/.build/release/flexview" comment \
+
+        # Images have to live somewhere with a public URL for a comment to show them:
+        # a workflow artifact is a zip behind auth and cannot be linked to.
+        if [ -n "${{ inputs.s3-bucket }}" ]; then
+          PUBLISH=(
+            publish
+            --report "$OUT/diff/report.json"
+            --bucket "${{ inputs.s3-bucket }}"
+            --region "${{ inputs.s3-region }}"
+            --prefix "${{ inputs.s3-prefix }}"
+            --repository "$GITHUB_REPOSITORY"
+            --commit "${{ github.event.pull_request.head.sha }}"
+            --html "$OUT/report.html"
+          )
+          [ -n "${{ github.event.pull_request.number }}" ] && PUBLISH+=(--pr "${{ github.event.pull_request.number }}")
+          [ -n "${{ inputs.s3-endpoint }}" ] && PUBLISH+=(--endpoint "${{ inputs.s3-endpoint }}")
+          [ -n "${{ inputs.s3-public-base-url }}" ] && PUBLISH+=(--public-base-url "${{ inputs.s3-public-base-url }}")
+          "$TOOL/.build/debug/flexview" "${PUBLISH[@]}"
+        fi
+
+        "$TOOL/.build/debug/flexview" comment \
           --report "$OUT/diff/report.json" \
           --artifact-name "${{ inputs.artifact-name }}" \
           --artifact-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -214,7 +257,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
       run: |
-        "$GITHUB_WORKSPACE/.flexview-tool/.build/release/flexview" comment \
+        "$GITHUB_WORKSPACE/.flexview-tool/.build/debug/flexview" comment \
           --report "${{ runner.temp }}/flexview/diff/report.json" \
           --pr "${{ github.event.pull_request.number }}" \
           --artifact-name "${{ inputs.artifact-name }}" \
