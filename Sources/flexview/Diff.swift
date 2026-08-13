@@ -38,6 +38,12 @@ struct Diff: AsyncParsableCommand {
     @Option(name: .long, help: "Also write a self-contained HTML report to this path.")
     var html: String?
 
+    @Option(
+        name: .long,
+        help: "A second render of head. Previews that differ between the two renders are marked unstable and excluded from the comparison."
+    )
+    var verify: String?
+
     func validate() throws {
         guard (0...100).contains(tolerance) else {
             throw ValidationError("--tolerance must be a percentage between 0 and 100.")
@@ -64,10 +70,42 @@ struct Diff: AsyncParsableCommand {
             )
         }
 
+        // Anything that differs between two renders of the same commit cannot be
+        // compared against anything: it would show up as a change nobody made.
+        var unstable: Set<PreviewID> = []
+        if let verify {
+            let verifyManifest = try Manifest.read(from: URL(fileURLWithPath: verify))
+            let verifyHashes = Dictionary(
+                verifyManifest.entries.map { ($0.previewID, $0.sha256) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            for entry in headManifest.entries where verifyHashes[entry.previewID] != entry.sha256 {
+                unstable.insert(entry.previewID)
+            }
+        }
+
         let outcome = ManifestJoin.join(base: baseManifest, head: headManifest)
-        var previews = outcome.settled
+        var previews = outcome.settled.map { diff -> PreviewDiff in
+            guard unstable.contains(diff.previewID) else { return diff }
+            var marked = diff
+            marked.change = .unstable
+            marked.diffPNG = nil
+            return marked
+        }
 
         for candidate in outcome.candidates {
+            guard !unstable.contains(candidate.previewID) else {
+                previews.append(PreviewDiff(
+                    previewID: candidate.previewID,
+                    module: candidate.head.module,
+                    sourceFile: candidate.head.sourceFile,
+                    displayName: candidate.head.displayName,
+                    change: .unstable,
+                    basePNG: candidate.base.pngPath,
+                    headPNG: candidate.head.pngPath
+                ))
+                continue
+            }
             let diffName = "\(candidate.previewID.slug).diff.png"
             let comparison = try ImageComparator.compare(
                 base: baseDirectory.appendingPathComponent(candidate.base.pngPath),
@@ -122,6 +160,9 @@ struct Diff: AsyncParsableCommand {
                 diff.previewID.rawValue,
                 percentage
             ))
+        }
+        for diff in report.previews where diff.change == .unstable {
+            print("  unstable: \(diff.previewID) renders differently on the same commit; excluded")
         }
         for failure in report.failures {
             print("  failed to render: \(failure.previewID) — \(failure.message)")

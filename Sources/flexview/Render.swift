@@ -81,6 +81,12 @@ struct Render: AsyncParsableCommand {
     @Option(name: .long, help: "iOS deployment target for the generated host project.")
     var deploymentTarget: String = "17.0"
 
+    @Flag(
+        name: .long,
+        help: "Wait for asynchronously loaded content before capturing. Slower, but required for previews whose content arrives late."
+    )
+    var settle: Bool = false
+
     func validate() throws {
         if workspace != nil, project != nil {
             throw ValidationError("--workspace and --project are mutually exclusive.")
@@ -140,6 +146,7 @@ struct Render: AsyncParsableCommand {
         var environment = ProcessInfo.processInfo.environment
         environment[RunnerEnvironment.output] = outputDirectory.path
         environment[RunnerEnvironment.appearance] = appearance.rawValue
+        if settle { environment[RunnerEnvironment.settle] = "1" }
         if !modules.isEmpty {
             environment[RunnerEnvironment.modules] = modules.joined(separator: ",")
         }
@@ -253,6 +260,7 @@ struct Render: AsyncParsableCommand {
         var environment = ProcessInfo.processInfo.environment
         environment["TEST_RUNNER_\(RunnerEnvironment.output)"] = outputDirectory.path
         environment["TEST_RUNNER_\(RunnerEnvironment.appearance)"] = appearance.rawValue
+        if settle { environment["TEST_RUNNER_\(RunnerEnvironment.settle)"] = "1" }
         if !modules.isEmpty {
             environment["TEST_RUNNER_\(RunnerEnvironment.modules)"] = modules.joined(separator: ",")
         }
@@ -322,6 +330,7 @@ enum RunnerEnvironment {
     static let output = "FLEXVIEW_OUT"
     static let appearance = "FLEXVIEW_APPEARANCE"
     static let modules = "FLEXVIEW_MODULES"
+    static let settle = "FLEXVIEW_SETTLE"
 }
 
 enum BuildSettings {

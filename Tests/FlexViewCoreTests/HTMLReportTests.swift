@@ -109,3 +109,48 @@ struct HTMLReportTests {
         #expect(html.contains("<title>flexview</title>"))
     }
 }
+
+@Suite("Unstable previews in the report")
+struct UnstableReportTests {
+    @Test("An unstable preview is named and kept out of the changed count")
+    func unstableIsExcludedAndExplained() {
+        let report = DiffReport(tolerance: 0, previews: [
+            diff("a", change: .changed),
+            diff("flaky", change: .unstable),
+        ])
+
+        #expect(report.summary.changed == 1)
+        #expect(report.summary.unstable == 1)
+        #expect(report.summary.headline == "1 changed · 0 new · 0 removed · 1 unstable")
+
+        let html = render(report)
+        #expect(html.contains(#"class="badge unstable""#))
+        #expect(html.contains("differently on the same commit"))
+    }
+
+    @Test("The comparison slider is mounted only where both sides exist")
+    func sliderMountPoints() {
+        let both = DiffReport(tolerance: 0, previews: [
+            diff("a", change: .changed, basePNG: "a.png", headPNG: "a.png"),
+        ])
+        let addedOnly = DiffReport(tolerance: 0, previews: [
+            diff("b", change: .added, headPNG: "b.png"),
+        ])
+
+        #expect(render(both).contains(#"<div class="compare">"#))
+        // A new preview has no "before" to wipe between.
+        #expect(!render(addedOnly).contains(#"<div class="compare">"#))
+    }
+
+    @Test("The slider clones existing images rather than embedding them again")
+    func sliderAddsNoBytes() {
+        let report = DiffReport(tolerance: 0, previews: [
+            diff("a", change: .changed, basePNG: "a.png", headPNG: "a.png"),
+        ])
+        let html = render(report)
+
+        // The mount point is empty in the markup; the script fills it by cloning.
+        #expect(html.contains(#"<div class="compare"></div>"#))
+        #expect(html.contains("cloneNode"))
+    }
+}

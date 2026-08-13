@@ -59,6 +59,9 @@ struct Review: AsyncParsableCommand {
     @Option(name: .long, help: "Seconds allowed for each render.")
     var timeout: Int = 1800
 
+    @Flag(name: .long, help: "Wait for asynchronously loaded content before capturing.")
+    var settle: Bool = false
+
     func run() async throws {
         let repoRoot = try git(["rev-parse", "--show-toplevel"], in: repo)
         let outputDirectory = URL(fileURLWithPath: out)
@@ -163,6 +166,7 @@ struct Review: AsyncParsableCommand {
             "--timeout", String(timeout),
         ]
         if let simulator { arguments += ["--simulator", simulator] }
+        if settle { arguments += ["--settle"] }
         if !modules.isEmpty { arguments += ["--modules"] + modules }
 
         var render = try Render.parse(arguments)

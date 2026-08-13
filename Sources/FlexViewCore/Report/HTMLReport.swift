@@ -82,6 +82,7 @@ public enum HTMLReport {
         html += tile("New", summary.added, style: "added")
         html += tile("Removed", summary.removed, style: "removed")
         if summary.unchanged > 0 { html += tile("Unchanged", summary.unchanged, style: "unchanged") }
+        if summary.unstable > 0 { html += tile("Unstable", summary.unstable, style: "unstable-tile") }
         if summary.failed > 0 { html += tile("Failed", summary.failed, style: "failed") }
         html += "</div>"
 
@@ -91,6 +92,14 @@ public enum HTMLReport {
             <p class="note">\#(summary.suppressed) preview\#(summary.suppressed == 1 ? "" : "s") \#
             differed by less than the \#(format(tolerance))% tolerance and \#
             \#(summary.suppressed == 1 ? "was" : "were") filed as unchanged.</p>
+            """#
+        }
+        if summary.unstable > 0 {
+            html += #"""
+            <p class="note">\#(summary.unstable) preview\#(summary.unstable == 1 ? "" : "s") \#
+            render\#(summary.unstable == 1 ? "s" : "") differently on the same commit, so \#
+            \#(summary.unstable == 1 ? "it was" : "they were") excluded from the comparison \#
+            rather than reported as a change nobody made.</p>
             """#
         }
         return html
@@ -127,30 +136,37 @@ public enum HTMLReport {
         // An added preview has no "before" and a removed one has no "after"; render only
         // the columns that exist rather than an empty placeholder.
         if let path = preview.basePNG, let directory = baseDirectory {
-            html += frame("Before", url: directory.appendingPathComponent(path), options: options)
+            html += frame("Before", role: "before", url: directory.appendingPathComponent(path), options: options)
         }
         if let path = preview.headPNG, let directory = headDirectory {
             html += frame(preview.change == .added ? "New preview" : "After",
+                          role: "after",
                           url: directory.appendingPathComponent(path),
                           options: options)
         }
         if let path = preview.diffPNG {
-            html += frame("Diff", url: diffDirectory.appendingPathComponent(path), options: options)
+            html += frame("Diff", role: "diff", url: diffDirectory.appendingPathComponent(path), options: options)
         }
-        html += "</div></article>"
+        html += "</div>"
+        // Filled in by script, cloning the images above. Emitting fresh <img> tags here
+        // would embed a second copy of both data URIs.
+        if preview.basePNG != nil, preview.headPNG != nil {
+            html += #"<div class="compare"></div>"#
+        }
+        html += "</article>"
         return html
     }
 
-    private static func frame(_ caption: String, url: URL, options: Options) -> String {
+    private static func frame(_ caption: String, role: String, url: URL, options: Options) -> String {
         let source = options.inlineImages ? dataURI(for: url) : url.path
         guard let source else {
-            return #"<figure class="missing"><div class="box">image unavailable</div><figcaption>\#(escape(caption))</figcaption></figure>"#
+            return #"<figure class="missing" data-role="\#(role)"><div class="box">image unavailable</div><figcaption>\#(escape(caption))</figcaption></figure>"#
         }
         // Click to zoom via a checkbox rather than a link to the same image: an anchor
         // would embed a second copy of the data URI and double the file size.
         let toggle = "z\(nextFrameID())"
         return #"""
-        <figure><input type="checkbox" id="\#(toggle)" class="zoom">\#
+        <figure data-role="\#(role)"><input type="checkbox" id="\#(toggle)" class="zoom">\#
         <label for="\#(toggle)"><img loading="lazy" src="\#(escape(source))" alt="\#(escape(caption))"></label>\#
         <figcaption>\#(escape(caption))</figcaption></figure>
         """#
@@ -185,6 +201,7 @@ public enum HTMLReport {
         case .removed: "Removed"
         case .changed: "Changed"
         case .unchanged: "Unchanged"
+        case .unstable: "Unstable"
         }
     }
 
@@ -282,6 +299,33 @@ public enum HTMLReport {
           background-position: 0 0, 0 8px, 8px -8px, -8px 0;
         }
         figcaption { font-size: 12px; color: var(--muted); }
+        .badge.unstable { color: var(--muted); }
+        .tile.unstable-tile .value { color: var(--muted); }
+        /* Before/after wipe. The two images are clones of the ones above, so the slider
+           costs no extra bytes in a report with inlined images. */
+        .compare { margin-top: 14px; max-width: 320px; }
+        .compare .stage {
+          position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 8px;
+          line-height: 0; cursor: ew-resize; touch-action: none;
+        }
+        .compare .stage img { display: block; width: 100%; height: auto; max-width: none; }
+        .compare .after {
+          position: absolute; inset: 0 auto 0 0; width: var(--pos, 50%); overflow: hidden;
+        }
+        .compare .after img { position: absolute; top: 0; left: 0; height: 100%; width: auto; }
+        .compare .handle {
+          position: absolute; top: 0; bottom: 0; left: var(--pos, 50%); width: 2px;
+          background: var(--fg); opacity: .85; pointer-events: none;
+        }
+        .compare .handle::after {
+          content: ""; position: absolute; top: 50%; left: 50%; width: 26px; height: 26px;
+          transform: translate(-50%, -50%); border-radius: 50%;
+          background: var(--bg); border: 2px solid var(--fg);
+        }
+        .compare .legend {
+          display: flex; justify-content: space-between; font-size: 12px; color: var(--muted);
+          margin-top: 6px;
+        }
         .zoom { display: none; }
         figure label { cursor: zoom-in; display: block; }
         .zoom:checked + label { cursor: zoom-out; }
@@ -299,6 +343,59 @@ public enum HTMLReport {
     }
 
     private static func footer() -> String {
-        "<footer>Generated by flexview.</footer></body></html>"
+        #"""
+        <footer>Generated by flexview.</footer>
+        <script>
+        // Builds the before/after wipe by cloning the images already on the page. Cloning
+        // matters: with inlined images, emitting fresh <img> tags would embed a second
+        // copy of every data URI and double the file size.
+        for (const card of document.querySelectorAll('.preview')) {
+          const mount = card.querySelector('.compare');
+          const before = card.querySelector('figure[data-role="before"] img');
+          const after = card.querySelector('figure[data-role="after"] img');
+          if (!mount || !before || !after) continue;
+
+          const stage = document.createElement('div');
+          stage.className = 'stage';
+          // After fills the stage and Before is clipped over it from the left, so the
+          // left of the handle reads as Before and the right as After, matching the
+          // legend and the usual direction of a wipe.
+          const baseImage = after.cloneNode();
+          const overlay = document.createElement('div');
+          overlay.className = 'after';
+          const headImage = before.cloneNode();
+          overlay.appendChild(headImage);
+          const handle = document.createElement('div');
+          handle.className = 'handle';
+          stage.append(baseImage, overlay, handle);
+
+          const legend = document.createElement('div');
+          legend.className = 'legend';
+          legend.innerHTML = '<span>Before</span><span>After</span>';
+          mount.append(stage, legend);
+
+          // The overlay is clipped to a width, so its image must keep the stage's full
+          // width rather than being squeezed with it.
+          const sizeOverlay = () => { headImage.style.width = stage.clientWidth + 'px'; };
+          if (baseImage.complete) sizeOverlay(); else baseImage.addEventListener('load', sizeOverlay);
+          window.addEventListener('resize', sizeOverlay);
+
+          const moveTo = (clientX) => {
+            const box = stage.getBoundingClientRect();
+            const ratio = Math.min(Math.max((clientX - box.left) / box.width, 0), 1);
+            stage.style.setProperty('--pos', (ratio * 100) + '%');
+          };
+          let dragging = false;
+          stage.addEventListener('pointerdown', (event) => {
+            dragging = true;
+            stage.setPointerCapture(event.pointerId);
+            moveTo(event.clientX);
+          });
+          stage.addEventListener('pointermove', (event) => { if (dragging) moveTo(event.clientX); });
+          stage.addEventListener('pointerup', () => { dragging = false; });
+          stage.addEventListener('pointercancel', () => { dragging = false; });
+        }
+        </script></body></html>
+        """#
     }
 }

@@ -16,6 +16,9 @@ public enum PreviewChange: String, Codable, Sendable {
     case changed
     /// In both and visually identical, or different by less than the tolerance.
     case unchanged
+    /// Renders differently on the same commit, so it cannot be compared at all. Kept
+    /// out of `changed` rather than reported as a change nobody made.
+    case unstable
 }
 
 public struct PreviewDiff: Codable, Sendable, Equatable {
@@ -102,6 +105,7 @@ public struct DiffReport: Codable, Sendable {
             removed: previews.count { $0.change == .removed },
             changed: previews.count { $0.change == .changed },
             unchanged: previews.count { $0.change == .unchanged },
+            unstable: previews.count { $0.change == .unstable },
             suppressed: previews.count(where: \.suppressedByTolerance),
             failed: failures.count
         )
@@ -112,12 +116,14 @@ public struct DiffReport: Codable, Sendable {
         public var removed: Int
         public var changed: Int
         public var unchanged: Int
+        public var unstable: Int
         public var suppressed: Int
         public var failed: Int
 
         /// The line that heads the PR comment.
         public var headline: String {
             var parts = ["\(changed) changed", "\(added) new", "\(removed) removed"]
+            if unstable > 0 { parts.append("\(unstable) unstable") }
             if failed > 0 { parts.append("\(failed) failed") }
             return parts.joined(separator: " · ")
         }

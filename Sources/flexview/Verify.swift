@@ -41,6 +41,9 @@ struct Verify: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Directory for the renders.")
     var out: String
 
+    @Flag(name: .long, help: "Wait for asynchronously loaded content before capturing.")
+    var settle: Bool = false
+
     func validate() throws {
         guard runs >= 2 else {
             throw ValidationError("--runs must be at least 2; there is nothing to compare otherwise.")
@@ -64,6 +67,7 @@ struct Verify: AsyncParsableCommand {
                 "--deployment-target", deploymentTarget,
             ]
             if let simulator { arguments += ["--simulator", simulator] }
+            if settle { arguments += ["--settle"] }
             if !modules.isEmpty { arguments += ["--modules"] + modules }
 
             var render = try Render.parse(arguments)

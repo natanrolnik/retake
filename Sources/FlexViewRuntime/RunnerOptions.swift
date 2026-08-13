@@ -18,17 +18,28 @@ public struct RunnerOptions: Sendable {
     /// Note this filters at render time, not build time: the runner binary still links
     /// every module, so scoping saves rendering, never compilation.
     public var modules: [String]?
+    /// Wait for asynchronously loaded content before capturing. Costs roughly two
+    /// seconds per preview, and is the difference between a reproducible render and a
+    /// flaky one for views whose content arrives late.
+    public var settle: Bool
 
-    public init(outputDirectory: URL, appearance: Appearance = .light, modules: [String]? = nil) {
+    public init(
+        outputDirectory: URL,
+        appearance: Appearance = .light,
+        modules: [String]? = nil,
+        settle: Bool = false
+    ) {
         self.outputDirectory = outputDirectory
         self.appearance = appearance
         self.modules = modules
+        self.settle = settle
     }
 
     public enum EnvironmentKey {
         public static let output = "FLEXVIEW_OUT"
         public static let appearance = "FLEXVIEW_APPEARANCE"
         public static let modules = "FLEXVIEW_MODULES"
+        public static let settle = "FLEXVIEW_SETTLE"
     }
 
     public enum Error: Swift.Error, CustomStringConvertible {
@@ -70,7 +81,8 @@ public struct RunnerOptions: Sendable {
         return RunnerOptions(
             outputDirectory: URL(fileURLWithPath: output),
             appearance: appearance,
-            modules: modules
+            modules: modules,
+            settle: environment[EnvironmentKey.settle] == "1"
         )
     }
 }

@@ -157,7 +157,7 @@ struct ManifestJoinTests {
         ])
 
         #expect(report.summary == DiffReport.Summary(
-            added: 1, removed: 0, changed: 2, unchanged: 1, suppressed: 0, failed: 0
+            added: 1, removed: 0, changed: 2, unchanged: 1, unstable: 0, suppressed: 0, failed: 0
         ))
         #expect(report.summary.headline == "2 changed · 1 new · 0 removed")
     }

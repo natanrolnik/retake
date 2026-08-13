@@ -41,8 +41,8 @@ open class FlexViewSnapshotTests: XCTestCase {
 
     /// Override to render on something other than the UIKit strategy.
     @MainActor
-    open func makeRenderingStrategy() -> RenderingStrategy {
-        UIKitRenderingStrategy()
+    open func makeRenderingStrategy(settle: Bool) -> RenderingStrategy {
+        settle ? SettlingRenderingStrategy() : UIKitRenderingStrategy()
     }
 
     /// Errors, not XCTAssert: the global assertion functions are unavailable to a
@@ -75,7 +75,7 @@ open class FlexViewSnapshotTests: XCTestCase {
 
         let session = PreviewRenderSession(
             options: options,
-            strategy: makeRenderingStrategy(),
+            strategy: makeRenderingStrategy(settle: options.settle),
             platform: .ios,
             simulator: Self.currentSimulatorDescription()
         )
