@@ -105,12 +105,21 @@ runs:
     # Deliberately not installed here. The repository pins its own Tuist version, and a
     # different one can produce a graph that disagrees with the project, so the caller
     # installs it the same way it does for every other job.
-    - name: Check for Tuist
+    - name: Resolve Tuist
+      id: tuist
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         if ! command -v tuist >/dev/null 2>&1; then
           echo "::error::tuist is not on PATH. Install it before this step, for example with jdx/mise-action or tuist/setup-tuist, using the version this repository pins."
           exit 1
+        fi
+        # Prefer running through mise where it manages tuist, so the pinned version is
+        # the one used.
+        if command -v mise >/dev/null 2>&1 && mise which tuist >/dev/null 2>&1; then
+          echo "command=mise exec -- tuist" >> "$GITHUB_OUTPUT"
+        else
+          echo "command=tuist" >> "$GITHUB_OUTPUT"
         fi
         tuist version
 
@@ -141,6 +150,7 @@ runs:
           --deployment-target "${{ inputs.deployment-target }}"
           --runtime-sources "$TOOL"
           --html "$OUT/report.html"
+          --tuist "${{ steps.tuist.outputs.command }}"
         )
         [ -n "${{ inputs.simulator }}" ] && ARGS+=(--simulator "${{ inputs.simulator }}")
         [ -n "${{ inputs.modules }}" ] && ARGS+=(--modules ${{ inputs.modules }})

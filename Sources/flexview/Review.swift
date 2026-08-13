@@ -68,6 +68,9 @@ struct Review: AsyncParsableCommand {
     @Option(name: .long, help: "Path to the SnapshotPreviews checkout, if it cannot be inferred.")
     var snapshotPreviews: String?
 
+    @Option(name: .long, help: "Tuist executable. Pass an absolute path to bypass a version manager shim.")
+    var tuist: String = "tuist"
+
     @Option(name: .long, help: "Seconds allowed for each render.")
     var timeout: Int = 1800
 
@@ -104,7 +107,7 @@ struct Review: AsyncParsableCommand {
         }
         print("flexview: \(changedFiles.count) changed file\(changedFiles.count == 1 ? "" : "s")")
 
-        let headGraph = try graph(of: projectDirectory.path, label: "head")
+        let headGraph = try graph(of: projectDirectory, label: "head")
 
         let renderedModules: [String]
         if modules.isEmpty {
@@ -161,13 +164,12 @@ struct Review: AsyncParsableCommand {
                 atPath: baseProject.appendingPathComponent("Tuist/Package.swift").path
             ) {
                 print("flexview: resolving dependencies in the worktree")
-                _ = try Shell.runChecked(
-                    "/usr/bin/env",
-                    ["tuist", "install"],
-                    currentDirectory: baseProject
-                )
+                // Launched from the head project, which has the version manager
+                // config, but targeting the worktree.
+                try Tuist(command: tuist, workingDirectory: projectDirectory)
+                    .run(["install"], at: baseProject)
             }
-            let baseGraph = try graph(of: baseProject.path, label: "base")
+            let baseGraph = try graph(of: baseProject, label: "base")
             try await render(graph: baseGraph, modules: renderedModules, out: baseSnapshots, label: "base")
         }
 
@@ -210,6 +212,7 @@ struct Review: AsyncParsableCommand {
         ]
         if let simulator { arguments += ["--simulator", simulator] }
         if settle { arguments += ["--settle"] }
+        arguments += ["--tuist", tuist]
         if let runtimeSources { arguments += ["--runtime-sources", runtimeSources] }
         if let snapshotPreviews { arguments += ["--snapshot-previews", snapshotPreviews] }
         if !modules.isEmpty { arguments += ["--modules"] + modules }
@@ -218,13 +221,13 @@ struct Review: AsyncParsableCommand {
         try await render.run()
     }
 
-    private func graph(of root: String, label: String) throws -> URL {
+    private func graph(of root: URL, label: String) throws -> URL {
         let directory = URL(fileURLWithPath: out).appendingPathComponent("graph-\(label)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        _ = try Shell.runChecked(
-            "/usr/bin/env",
-            ["tuist", "graph", "--format", "json", "--no-open", "--output-path", directory.path],
-            currentDirectory: URL(fileURLWithPath: root)
+        // Launched from the project under review, which has the version manager config.
+        try Tuist(command: tuist, workingDirectory: URL(fileURLWithPath: repo).standardizedFileURL).run(
+            ["graph", "--format", "json", "--no-open", "--output-path", directory.path],
+            at: root
         )
         return directory.appendingPathComponent("graph.json")
     }
