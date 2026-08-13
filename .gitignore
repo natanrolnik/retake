@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+
+# Xcode / xcodebuild
+*.xcodeproj/
+*.xcworkspace/
+.derived/
+.derived-data/
+DerivedData/
+
+# Tuist generated artifacts
+Derived/
+Tuist/.build/
