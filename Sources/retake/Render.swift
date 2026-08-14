@@ -48,6 +48,13 @@ struct Render: AsyncParsableCommand {
     )
     var modules: [String] = []
 
+    @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: "Render only the previews declared in these source files. Implies the modules that own them."
+    )
+    var files: [String] = []
+
     @Option(name: .shortAndLong, help: "Directory for the PNGs and manifest.json.")
     var out: String
 
@@ -168,6 +175,32 @@ struct Render: AsyncParsableCommand {
         }
     }
 
+    /// Turns `--files` paths into the `#fileID` values the runtime matches on, which are
+    /// "Module/Basename.swift". The module comes from whichever target owns the file.
+    private func fileIDs() -> [String] {
+        guard
+            let graph,
+            let targetGraph = try? TuistGraphParser.parse(contentsOf: URL(fileURLWithPath: graph))
+        else {
+            return []
+        }
+        return files.compactMap { path in
+            let absolute = URL(fileURLWithPath: path).standardizedFileURL.path
+            guard
+                let owner = targetGraph.owner(ofFile: absolute),
+                let module = targetGraph.targets[owner]?.productName
+            else {
+                return nil
+            }
+            return "\(module)/\((absolute as NSString).lastPathComponent)"
+        }
+    }
+
+    /// Modules owning `--files`, so the render only builds what it needs.
+    func modulesForFiles() -> [String] {
+        Array(Set(fileIDs().compactMap { $0.split(separator: "/").first.map(String.init) }))
+    }
+
     /// Parsed `--env`, dropping anything that is not KEY=VALUE.
     private var runnerEnvironment: [String: String] {
         Dictionary(
@@ -242,7 +275,7 @@ struct Render: AsyncParsableCommand {
 
         let selection = try HostSelector.select(
             graph: targetGraph,
-            modules: modules,
+            modules: modules.isEmpty ? modulesForFiles() : modules,
             candidateHosts: hosts
         )
         print("retake: \(selection.explanation)")
@@ -435,7 +468,8 @@ struct Render: AsyncParsableCommand {
         if let workspace { arguments += ["-workspace", workspace] }
         if let project { arguments += ["-project", project] }
         if let derivedData { arguments += ["-derivedDataPath", derivedData] }
-        arguments += ["-destination", Self.destination(for: simulator)]
+        let device = try resolvedSimulator()
+        arguments += ["-destination", Self.destination(for: device)]
         // Only for a host retake generated itself, which has no entitlements to lose.
         // An app from the repository must keep its own: simulator builds carry
         // entitlements through an ad-hoc signature, and without one an app that reaches
@@ -460,6 +494,9 @@ struct Render: AsyncParsableCommand {
             environment["TEST_RUNNER_\(key)"] = value
         }
         if settle { environment["TEST_RUNNER_\(RunnerEnvironment.settle)"] = "1" }
+        if !files.isEmpty {
+            environment["TEST_RUNNER_\(RunnerEnvironment.files)"] = fileIDs().joined(separator: "\n")
+        }
         if !crashers.isEmpty {
             // Newline separated: preview ids contain commas.
             environment["TEST_RUNNER_\(RunnerEnvironment.skip)"] = crashers.map(\.rawValue).joined(separator: "\n")
@@ -468,7 +505,7 @@ struct Render: AsyncParsableCommand {
             environment["TEST_RUNNER_\(RunnerEnvironment.modules)"] = modules.joined(separator: ",")
         }
 
-        print("retake: running \(scheme) on \(simulator ?? "the default simulator")")
+        print("retake: running \(scheme) on \(device)")
         let command = XcodeBuild.command(arguments: arguments + ["test"], pretty: pretty)
         let result = try Shell.run(
             command.executable,
@@ -490,8 +527,17 @@ struct Render: AsyncParsableCommand {
         if out == nil { try report(outputDirectory: outputDirectory) }
     }
 
+    /// The simulator to use, chosen from the machine when the caller named none.
+    private func resolvedSimulator() throws -> String {
+        if let simulator, !simulator.isEmpty { return simulator }
+        let picked = try SimulatorPicker.pick()
+        // Printed because a render is only comparable to another on the same device.
+        print("retake: no --simulator given, using \(picked.descriptor)\(picked.isBooted ? " (already booted)" : "")")
+        return picked.descriptor
+    }
+
     private static func destination(for simulator: String?) -> String {
-        guard let simulator else { return "platform=iOS Simulator,name=iPhone 16" }
+        guard let simulator else { return "platform=iOS Simulator" }
         let parts = simulator.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count > 1 else { return "platform=iOS Simulator,name=\(parts[0])" }
         return "platform=iOS Simulator,name=\(parts[0]),OS=\(parts[1])"
@@ -537,6 +583,7 @@ enum RunnerEnvironment {
     static let modules = "RETAKE_MODULES"
     static let settle = "RETAKE_SETTLE"
     static let skip = "RETAKE_SKIP"
+    static let files = "RETAKE_FILES"
 }
 
 enum BuildSettings {

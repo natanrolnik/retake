@@ -224,3 +224,26 @@ struct PathGlobTests {
         #expect(PathGlob("*.md").matches("/elsewhere/README.md", relativeTo: "/repo"))
     }
 }
+
+@Suite("File filtering")
+struct FileFilterTests {
+    /// The runtime matches on `#fileID`, which is "Module/Basename.swift". Turning a path
+    /// into one needs the graph, because the module is whichever target owns the file.
+    @Test("A path becomes the file id the runtime matches on")
+    func pathToFileID() throws {
+        let graph = try sampleGraph()
+        let owner = try #require(graph.owner(ofFile: "/repo/Feature/Sources/Screen.swift"))
+
+        #expect(graph.targets[owner]?.productName == "FeatureKit")
+        // Deliberately the product name, not the target name: that is what a preview
+        // reports as its module.
+        #expect(owner.name == "Feature")
+    }
+
+    @Test("A file no target owns cannot be turned into a file id")
+    func unownedFile() throws {
+        let graph = try sampleGraph()
+
+        #expect(graph.owner(ofFile: "/repo/Scripts/tool.swift") == nil)
+    }
+}

@@ -78,10 +78,29 @@ Useful options:
 | `--modules A B C` | Render only these modules |
 | `--timeout <seconds>` | Kill the runner if it hangs |
 | `--settle` | Wait for asynchronously loaded content before capturing |
+| `--simulator "iPhone 17,26.0"` | Pinned device. Omitted, retake picks the newest available iPhone, preferring one already booted, and prints which |
+| `--files a.swift b.swift` | Only the previews declared in those files |
 | `--out <dir>` | Where PNGs and `manifest.json` go |
 
 Previews that fail to render are recorded in `manifest.json` under `failures` rather than
 being dropped, so a render failure can never be mistaken for a deleted preview later.
+
+## Snapshotting the current state
+
+```bash
+retake snapshot --repo . --out ./out
+
+# Only what one file draws, which is the fastest loop there is
+retake snapshot --repo . --files Sources/DesignSystem/Button.swift --out ./out
+```
+
+No comparison, no base commit: renders what is there now and writes a catalogue, one
+image per preview grouped by module. `--files` narrows to the previews declared in those
+files and, on its own, works out which modules to build, so a one file check builds one
+module.
+
+`PreviewProvider` previews report no file, so they cannot be matched by `--files`; retake
+says how many it left out rather than silently rendering nothing.
 
 ## Diffing
 

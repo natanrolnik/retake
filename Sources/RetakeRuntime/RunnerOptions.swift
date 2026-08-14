@@ -24,19 +24,24 @@ public struct RunnerOptions: Sendable {
     public var settle: Bool
     /// Preview ids a previous attempt died on.
     public var skip: [String]
+    /// `#fileID` values to render, as "Module/File.swift". Empty renders everything the
+    /// module filter allows.
+    public var files: [String]
 
     public init(
         outputDirectory: URL,
         appearance: Appearance = .light,
         modules: [String]? = nil,
         settle: Bool = false,
-        skip: [String] = []
+        skip: [String] = [],
+        files: [String] = []
     ) {
         self.outputDirectory = outputDirectory
         self.appearance = appearance
         self.modules = modules
         self.settle = settle
         self.skip = skip
+        self.files = files
     }
 
     public enum EnvironmentKey {
@@ -45,6 +50,7 @@ public struct RunnerOptions: Sendable {
         public static let modules = "RETAKE_MODULES"
         public static let settle = "RETAKE_SETTLE"
         public static let skip = "RETAKE_SKIP"
+        public static let files = "RETAKE_FILES"
     }
 
     public enum Error: Swift.Error, CustomStringConvertible {
@@ -90,6 +96,9 @@ public struct RunnerOptions: Sendable {
             settle: environment[EnvironmentKey.settle] == "1",
             // Newline separated: preview ids contain commas.
             skip: environment[EnvironmentKey.skip]?
+                .split(separator: "\n")
+                .map(String.init) ?? [],
+            files: environment[EnvironmentKey.files]?
                 .split(separator: "\n")
                 .map(String.init) ?? []
         )

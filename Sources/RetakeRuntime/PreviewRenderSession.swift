@@ -34,6 +34,8 @@ public final class PreviewRenderSession {
     private var completion: ((Manifest) -> Void)?
     /// Previews to skip, because a previous attempt died rendering them.
     private let skipped: Set<PreviewID>
+    /// `#fileID`s to render. Empty renders everything.
+    private let onlyFiles: Set<String>
 
     private struct Item {
         var preview: DiscoveredPreview
@@ -52,6 +54,7 @@ public final class PreviewRenderSession {
         self.platform = platform
         self.simulator = simulator
         self.skipped = Set(options.skip.map(PreviewID.init(rawValue:)))
+        self.onlyFiles = Set(options.files)
     }
 
     /// - Throws: if the output directory cannot be created. Per-preview failures are
@@ -93,9 +96,21 @@ public final class PreviewRenderSession {
             warn("\(colliding.count) previews share the id '\(id)' (\(files)); only the first is rendered.")
         }
 
+        // A PreviewProvider reports no file, so it cannot be matched against one. Say so
+        // rather than quietly rendering nothing for a file that does have previews.
+        if !onlyFiles.isEmpty {
+            let unmatchable = discovered.filter { $0.fileID == nil }.count
+            if unmatchable > 0 {
+                warn("\(unmatchable) PreviewProvider previews cannot be filtered by file, and were left out.")
+            }
+        }
+
         var claimed: Set<PreviewID> = []
         queue = resolved.assignments.compactMap { assignment in
             guard claimed.insert(assignment.id).inserted else { return nil }
+            if !onlyFiles.isEmpty {
+                guard let fileID = assignment.preview.fileID, onlyFiles.contains(fileID) else { return nil }
+            }
             guard !skipped.contains(assignment.id) else {
                 failures.append(ManifestFailure(
                     previewID: assignment.id,

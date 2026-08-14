@@ -8,7 +8,7 @@ inputs:
     required: false
     default: ''
   simulator:
-    description: Simulator to render on, as 'name,OS'. For example 'iPhone 17,26.0'.
+    description: Simulator to render on, as 'name,OS'. The runner's newest available iPhone when empty.
     required: false
     default: ''
   deployment-target:
@@ -99,18 +99,6 @@ outputs:
 runs:
   using: composite
   steps:
-    # Booting a simulator on a cold runner takes minutes, and it is the single largest
-    # cost in this job. Started first so it happens while retake and the project are
-    # still building, rather than in silence after them.
-    - name: Warm the simulator
-      shell: bash
-      run: |
-        DEVICE="${{ inputs.simulator }}"
-        DEVICE="${DEVICE%%,*}"
-        [ -z "$DEVICE" ] && DEVICE="iPhone 17"
-        echo "Booting $DEVICE in the background"
-        xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
-
     # Installed from a release rather than built here: the tarball carries the binary
     # and the runtime sources it compiles into the generated host project, so nothing is
     # compiled on the runner and the version is whatever the tag says.
@@ -129,6 +117,19 @@ runs:
         # The runtime ships beside the binary, at <prefix>/runtime.
         echo "runtime=$(cd "$(dirname "$RETAKE")/.." && pwd)/runtime" >> "$GITHUB_OUTPUT"
         "$RETAKE" --help > /dev/null
+
+    # Booting a simulator on a cold runner takes minutes, and it is the largest single
+    # cost in this job. Started as early as it can be, which is once retake can say which
+    # simulator it would use: booting a different one than the render uses buys nothing.
+    - name: Warm the simulator
+      shell: bash
+      run: |
+        set -euo pipefail
+        DEVICE="${{ inputs.simulator }}"
+        DEVICE="${DEVICE%%,*}"
+        [ -z "$DEVICE" ] && DEVICE="$("${{ steps.retake.outputs.bin }}" simulator --name-only)"
+        echo "Booting $DEVICE in the background"
+        xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
 
     # Deliberately not installed here. The repository pins its own Tuist version, and a
     # different one can produce a graph that disagrees with the project, so the caller

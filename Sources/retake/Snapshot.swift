@@ -29,6 +29,13 @@ struct Snapshot: AsyncParsableCommand {
     var modules: [String] = []
 
     @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: "Render only the previews declared in these source files. The fastest way to see what one file draws."
+    )
+    var files: [String] = []
+
+    @Option(
         name: [.customLong("hosts"), .customLong("host")],
         parsing: .upToNextOption,
         help: "App targets allowed to host the previews."
@@ -93,6 +100,9 @@ struct Snapshot: AsyncParsableCommand {
         if let runtimeSources { arguments += ["--runtime-sources", runtimeSources] }
         if settle { arguments += ["--settle"] }
         if !modules.isEmpty { arguments += ["--modules"] + modules }
+        if !files.isEmpty {
+            arguments += ["--files"] + files.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+        }
         if !hosts.isEmpty { arguments += ["--hosts"] + hosts }
 
         let render = try Render.parse(arguments)
