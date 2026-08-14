@@ -35,6 +35,10 @@ inputs:
     description: Glob patterns, relative to the repository, for files that cannot affect rendering. A single unowned file otherwise widens the scope to everything.
     required: false
     default: '.github/** *.md **/*.md docs/**'
+  verbose-build:
+    description: Skip xcbeautify and keep the raw xcodebuild log. Verbose, but xcbeautify drops the render's own output, which is where a failure explains itself.
+    required: false
+    default: 'false'
   cache-profile:
     description: Tuist binary cache profile for the generated host (only-external, all-possible, none, or a custom profile). Reuses prebuilt binaries instead of compiling dependencies from source.
     required: false
@@ -215,6 +219,7 @@ runs:
         [ -n "${{ inputs.cache-profile }}" ] && ARGS+=(--cache-profile "${{ inputs.cache-profile }}")
         [ "${{ inputs.settle }}" = "true" ] && ARGS+=(--settle)
         [ "${{ inputs.warm-cache }}" = "true" ] && ARGS+=(--warm-cache)
+        [ "${{ inputs.verbose-build }}" = "true" ] && ARGS+=(--no-pretty)
         [ "${{ inputs.verify }}" = "true" ] && ARGS+=(--verify)
         [ "${{ steps.base-cache.outputs.cache-hit }}" = "true" ] && ARGS+=(--reuse-base)
 

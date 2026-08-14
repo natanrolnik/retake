@@ -84,6 +84,13 @@ struct Review: AsyncParsableCommand {
     @Flag(name: .long, help: "Warm the Tuist cache for the targets about to be rendered.")
     var warmCache: Bool = false
 
+    @Flag(
+        name: .long,
+        inversion: .prefixedNo,
+        help: "Pipe xcodebuild through xcbeautify when available. It drops the render's own output, which is where a failure explains itself."
+    )
+    var pretty: Bool = true
+
     @Option(
         name: .long,
         parsing: .upToNextOption,
@@ -256,6 +263,7 @@ struct Review: AsyncParsableCommand {
         arguments += ["--tuist", tuist]
         if let cacheProfile { arguments += ["--cache-profile", cacheProfile] }
         if warmCache { arguments += ["--warm-cache"] }
+        if !pretty { arguments += ["--no-pretty"] }
         if !hosts.isEmpty { arguments += ["--hosts"] + hosts }
         if !env.isEmpty { arguments += ["--env"] + env }
         // The base renders from a worktree, which has no version manager config, so

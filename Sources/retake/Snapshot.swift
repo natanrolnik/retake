@@ -76,6 +76,13 @@ struct Snapshot: AsyncParsableCommand {
     @Flag(name: .long, help: "Warm the Tuist cache for the targets about to be rendered.")
     var warmCache: Bool = false
 
+    @Flag(
+        name: .long,
+        inversion: .prefixedNo,
+        help: "Pipe xcodebuild through xcbeautify when available. It drops the render's own output, which is where a failure explains itself."
+    )
+    var pretty: Bool = true
+
     @Option(name: .long, help: "Path to the retake checkout, if it cannot be inferred.")
     var runtimeSources: String?
 
@@ -112,6 +119,7 @@ struct Snapshot: AsyncParsableCommand {
         if let simulator { arguments += ["--simulator", simulator] }
         if let cacheProfile { arguments += ["--cache-profile", cacheProfile] }
         if warmCache { arguments += ["--warm-cache"] }
+        if !pretty { arguments += ["--no-pretty"] }
         if let runtimeSources { arguments += ["--runtime-sources", runtimeSources] }
         if settle { arguments += ["--settle"] }
         if !modules.isEmpty { arguments += ["--modules"] + modules }
