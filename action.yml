@@ -44,9 +44,11 @@ inputs:
     required: false
     default: '.'
   retake-version:
-    description: Released version of retake to install, or "latest".
+    description: >-
+      Released version of retake to install. Defaults to the version this action was
+      referenced by, so pinning the action at 0.2.0 installs retake 0.2.0.
     required: false
-    default: 'latest'
+    default: ''
   artifact-name:
     description: Name of the uploaded artifact.
     required: false
@@ -111,7 +113,21 @@ runs:
           echo "::error::mise is not on PATH. Add jdx/mise-action before this step."
           exit 1
         fi
-        mise use -g "github:natanrolnik/retake@${{ inputs.retake-version }}"
+        VERSION="${{ inputs.retake-version }}"
+        if [ -z "$VERSION" ]; then
+          # The ref this action was called with, so the action and the tool ship
+          # together. A branch ref is not a version, so fall back to latest.
+          REF="${{ github.action_ref }}"
+          case "$REF" in
+            [0-9]*) VERSION="$REF" ;;
+            v[0-9]*) VERSION="${REF#v}" ;;
+            *) VERSION="latest" ;;
+          esac
+        fi
+        echo "Installing retake $VERSION"
+        # mise hides releases newer than its minimum_release_age, so "latest" resolves to
+        # nothing for a tag published minutes ago. Pinning a version is unaffected.
+        mise use -g "github:natanrolnik/retake@$VERSION"
         RETAKE="$(mise which retake)"
         echo "bin=$RETAKE" >> "$GITHUB_OUTPUT"
         # The runtime ships beside the binary, at <prefix>/runtime.
