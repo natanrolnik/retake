@@ -9,7 +9,7 @@ let project = Project(
             name: "DesignSystem",
             destinations: [.iPhone, .mac],
             product: .framework,
-            bundleId: "dev.flexview.sampleapp.designsystem",
+            bundleId: "dev.retake.sampleapp.designsystem",
             deploymentTargets: deploymentTargets,
             sources: ["Sources/DesignSystem/**"]
         ),
@@ -17,7 +17,7 @@ let project = Project(
             name: "Feature",
             destinations: [.iPhone, .mac],
             product: .framework,
-            bundleId: "dev.flexview.sampleapp.feature",
+            bundleId: "dev.retake.sampleapp.feature",
             deploymentTargets: deploymentTargets,
             sources: ["Sources/Feature/**"],
             dependencies: [.target(name: "DesignSystem")]
@@ -26,7 +26,7 @@ let project = Project(
             name: "App",
             destinations: [.iPhone],
             product: .app,
-            bundleId: "dev.flexview.sampleapp.app",
+            bundleId: "dev.retake.sampleapp.app",
             deploymentTargets: .iOS("17.0"),
             infoPlist: .default,
             sources: ["Sources/App/**"],

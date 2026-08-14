@@ -1,4 +1,4 @@
-# flexview — SwiftUI preview snapshots on pull requests
+# retake — SwiftUI preview snapshots on pull requests
 
 ## Context
 
@@ -6,7 +6,7 @@ Reviewers approving UI changes on an iOS/macOS PR today have to trust the diff o
 
 The naive pipeline (changed files → owning targets → "affected" previews → snapshot) is rejected as the source of truth: file→target ownership misses previews in *downstream* targets that consume a changed leaf module, and target-level granularity over-includes badly. Instead **a preview is defined as affected iff its rendering changed**. We render previews on the merge base and on the head, and pixel-diff. The Tuist dependency graph survives only as a *cost optimization* to skip rendering previews that provably cannot be reached from the changed files.
 
-Deliverable: a parameterized Swift CLI (`flexview`) usable locally, plus a thin GitHub Actions workflow that wraps it. Supports both iOS (simulator) and macOS (host) rendering.
+Deliverable: a parameterized Swift CLI (`retake`) usable locally, plus a thin GitHub Actions workflow that wraps it. Supports both iOS (simulator) and macOS (host) rendering.
 
 ## Constraints and decisions already made
 
@@ -26,15 +26,15 @@ If Spike A shows no usable per-preview file path, the fallback is Prefire (build
 
 ## Architecture
 
-A single SPM executable `flexview` (swift-argument-parser), with the pipeline split into subcommands so each stage is runnable and testable alone.
+A single SPM executable `retake` (swift-argument-parser), with the pipeline split into subcommands so each stage is runnable and testable alone.
 
 ```
-flexview scope     --changed-files <file> [--graph <json>]   → affected-targets.json
-flexview render    --scheme S --platform ios|macos [--simulator …] [--size WxH]
+retake scope     --changed-files <file> [--graph <json>]   → affected-targets.json
+retake render    --scheme S --platform ios|macos [--simulator …] [--size WxH]
                                                   --out <dir>  → PNGs + manifest.json
-flexview diff      --base <dir> --head <dir>       → report.json  (added/changed/removed/unchanged)
-flexview publish   --report report.json --bucket … → report with URLs
-flexview comment   --report report.json --pr N     → upserted PR comment
+retake diff      --base <dir> --head <dir>       → report.json  (added/changed/removed/unchanged)
+retake publish   --report report.json --bucket … → report with URLs
+retake comment   --report report.json --pr N     → upserted PR comment
 ```
 
 Rationale for subcommands over one monolith: the two render passes happen on different checkouts (and ideally the base pass is cache-hit and skipped entirely), so the orchestrator must be able to interleave them.
@@ -47,24 +47,24 @@ Define `PreviewID = module + "/" + sourceFilePath + "#" + displayNameOrOrdinal`.
 
 Package layout:
 
-- `Sources/flexview/` — CLI entry, subcommand definitions.
-- `Sources/FlexViewCore/Rendering/` — wraps SnapshotPreviews. Drives `xcodebuild test` against a generated snapshotting XCTest target for iOS; for macOS runs the equivalent host-side renderer without a simulator.
-- `Sources/FlexViewCore/Manifest.swift` — `manifest.json`: array of `{ previewID, module, sourceFile, displayName, pngPath, sha256 }`.
+- `Sources/retake/` — CLI entry, subcommand definitions.
+- `Sources/RetakeCore/Rendering/` — wraps SnapshotPreviews. Drives `xcodebuild test` against a generated snapshotting XCTest target for iOS; for macOS runs the equivalent host-side renderer without a simulator.
+- `Sources/RetakeCore/Manifest.swift` — `manifest.json`: array of `{ previewID, module, sourceFile, displayName, pngPath, sha256 }`.
 
 Parameters exposed: `--scheme`, `--platform`, `--simulator` (device + OS), `--size`, `--derived-data`, `--timeout`. Render determinism matters more than anything here: pin the simulator device+OS, force light/dark explicitly rather than inheriting, and disable animations — otherwise the pixel diff produces noise on every run and the whole tool is worthless. Expect to iterate on this.
 
-Ship Phase 1 as a usable local tool (`flexview render`) before touching CI.
+Ship Phase 1 as a usable local tool (`retake render`) before touching CI.
 
 ## Phase 2 — Scoping (optional optimization, can be deferred)
 
-- `Sources/FlexViewCore/Graph/` — parse the Tuist graph dump into targets + dependency edges; build the **reverse** dependency closure.
+- `Sources/RetakeCore/Graph/` — parse the Tuist graph dump into targets + dependency edges; build the **reverse** dependency closure.
 - `scope` takes the changed-file list, maps each file to its owning target via source globs, then computes that target plus all transitive dependents. Output is the set of targets whose previews could possibly be affected.
 - Non-source changes (assets, resources, `Project.swift`, `Package.swift`, Tuist manifests) must **fall back to "everything in scope"** rather than being silently ignored.
 - This only pays off if Spike A shows runtime filtering is possible; if not, we render everything and Phase 2 becomes a no-op we skip.
 
 ## Phase 3 — Diff and classification
 
-`Sources/FlexViewCore/Diff/`:
+`Sources/RetakeCore/Diff/`:
 
 - Join base and head manifests on `PreviewID`, producing four buckets:
   - **added** — in head only. This is the case you called out: there is no "before". Render a single image, label it *New preview*, no diff image. Always include these in the comment.
@@ -76,8 +76,8 @@ Ship Phase 1 as a usable local tool (`flexview render`) before touching CI.
 
 ## Phase 4 — Publish and comment
 
-- `Sources/FlexViewCore/Publish/` — upload PNGs to S3/R2 under `<repo>/<pr>/<sha>/<previewID-hash>.png`. Use presigned or public-read URLs per bucket policy. Set a lifecycle rule to expire old objects; note this in the README as required setup, since the bucket will otherwise grow forever.
-- `Sources/FlexViewCore/Comment/` — render Markdown and upsert a **sticky comment** identified by an HTML marker comment (`<!-- flexview -->`), so pushes update one comment instead of spamming the thread. Prefer a comment over editing the PR description: the description is human-authored and clobbering it is hostile.
+- `Sources/RetakeCore/Publish/` — upload PNGs to S3/R2 under `<repo>/<pr>/<sha>/<previewID-hash>.png`. Use presigned or public-read URLs per bucket policy. Set a lifecycle rule to expire old objects; note this in the README as required setup, since the bucket will otherwise grow forever.
+- `Sources/RetakeCore/Comment/` — render Markdown and upsert a **sticky comment** identified by an HTML marker comment (`<!-- retake -->`), so pushes update one comment instead of spamming the thread. Prefer a comment over editing the PR description: the description is human-authored and clobbering it is hostile.
 - Comment layout: a summary line (`3 changed · 1 new · 0 removed`), then a collapsed `<details>` per module, each preview as a three-column table (Before | After | Diff), with new previews as a single image.
 - Cap the number of embedded images (e.g. 20) and link to the full set for the remainder — a 300-image comment is unusable. State the cap in the comment when it triggers.
 
@@ -94,13 +94,13 @@ Ship Phase 1 as a usable local tool (`flexview render`) before touching CI.
 
 ```
 Package.swift
-Sources/flexview/main.swift + <Subcommand>.swift per stage
-Sources/FlexViewCore/Rendering/…      ← Phase 1
-Sources/FlexViewCore/Graph/…          ← Phase 2
-Sources/FlexViewCore/Diff/…           ← Phase 3
-Sources/FlexViewCore/Publish/…        ← Phase 4
-Sources/FlexViewCore/Comment/…        ← Phase 4
-Tests/FlexViewCoreTests/…
+Sources/retake/main.swift + <Subcommand>.swift per stage
+Sources/RetakeCore/Rendering/…      ← Phase 1
+Sources/RetakeCore/Graph/…          ← Phase 2
+Sources/RetakeCore/Diff/…           ← Phase 3
+Sources/RetakeCore/Publish/…        ← Phase 4
+Sources/RetakeCore/Comment/…        ← Phase 4
+Tests/RetakeCoreTests/…
 action.yml
 .github/workflows/preview-snapshots.yml
 README.md

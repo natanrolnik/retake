@@ -5,14 +5,14 @@ import PackageDescription
 import struct ProjectDescription.PackageSettings
 
 let packageSettings = PackageSettings(
-    productTypes: ["FlexViewRuntime": .framework]
+    productTypes: ["RetakeRuntime": .framework]
 )
 #endif
 
 let package = Package(
     name: "SampleMacDependencies",
     dependencies: [
-        // The flexview package at the root of this repository.
+        // The retake package at the root of this repository.
         .package(path: "../../..")
     ]
 )

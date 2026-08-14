@@ -5,7 +5,7 @@
 //  Created by Natan Rolnik on 14-08-2026.
 //
 
-import FlexViewRuntime
+import RetakeRuntime
 import MacDesignSystem
 
 // Referencing one type per module keeps the linker from stripping modules whose symbols

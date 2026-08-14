@@ -1,4 +1,4 @@
-name: flexview preview snapshots
+name: retake preview snapshots
 description: Render the SwiftUI previews a pull request affects, and report what changed visually.
 author: Natan Rolnik
 
@@ -43,14 +43,14 @@ inputs:
     description: Path to the Tuist repository to review.
     required: false
     default: '.'
-  flexview-ref:
-    description: Ref of the flexview repository to build the tool from.
+  retake-ref:
+    description: Ref of the retake repository to build the tool from.
     required: false
     default: 'main'
   artifact-name:
     description: Name of the uploaded artifact.
     required: false
-    default: 'flexview-report'
+    default: 'retake-report'
   s3-bucket:
     description: Bucket to upload images to. Without it the report is artifact-only and the comment links to it instead of showing images.
     required: false
@@ -60,9 +60,9 @@ inputs:
     required: false
     default: 'us-east-1'
   s3-prefix:
-    description: Key prefix for everything flexview uploads.
+    description: Key prefix for everything retake uploads.
     required: false
-    default: 'flexview'
+    default: 'retake'
   s3-url-mode:
     description: How uploaded objects are addressed. public = world readable bucket URL; cdn = served through s3-public-base-url; presigned = bucket stays private and each URL carries a time-limited signature.
     required: false
@@ -100,7 +100,7 @@ runs:
   using: composite
   steps:
     # Booting a simulator on a cold runner takes minutes, and it is the single largest
-    # cost in this job. Started first so it happens while flexview and the project are
+    # cost in this job. Started first so it happens while retake and the project are
     # still building, rather than in silence after them.
     - name: Warm the simulator
       shell: bash
@@ -111,18 +111,18 @@ runs:
         echo "Booting $DEVICE in the background"
         xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
 
-    - name: Check out flexview
+    - name: Check out retake
       uses: actions/checkout@v4
       with:
-        repository: natanrolnik/flexview
-        ref: ${{ inputs.flexview-ref }}
-        path: .flexview-tool
+        repository: natanrolnik/retake
+        ref: ${{ inputs.retake-ref }}
+        path: .retake-tool
 
-    - name: Identify the toolchain and flexview revision
+    - name: Identify the toolchain and retake revision
       id: tool
       shell: bash
       run: |
-        echo "sha=$(git -C .flexview-tool rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        echo "sha=$(git -C .retake-tool rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         # The binary is toolchain specific, so a Swift upgrade must miss the cache. Keyed
         # on the selected Xcode rather than `swiftc --version`: the first invocation of a
         # Swift tool on a fresh runner triggers Xcode's first-launch setup, which took
@@ -130,35 +130,35 @@ runs:
         echo "swift=$(xcode-select -p | tr -cd '[:alnum:].')" >> "$GITHUB_OUTPUT"
 
     # The binary is the thing worth caching: on a hit nothing is compiled at all. Keyed
-    # on the exact flexview revision, so a new revision rebuilds and an unchanged one
+    # on the exact retake revision, so a new revision rebuilds and an unchanged one
     # never does.
-    - name: Restore the flexview binary
+    - name: Restore the retake binary
       id: binary-cache
       uses: actions/cache@v4
       with:
-        path: .flexview-tool/.build/debug/flexview
-        key: flexview-bin-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ steps.tool.outputs.sha }}
+        path: .retake-tool/.build/debug/retake
+        key: retake-bin-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ steps.tool.outputs.sha }}
 
     # Only consulted when the binary is missing, to make that rebuild incremental rather
     # than from scratch.
-    - name: Restore the flexview build directory
+    - name: Restore the retake build directory
       if: steps.binary-cache.outputs.cache-hit != 'true'
       uses: actions/cache@v4
       with:
-        path: .flexview-tool/.build
-        key: flexview-build-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ hashFiles('.flexview-tool/Package.resolved') }}
+        path: .retake-tool/.build
+        key: retake-build-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ hashFiles('.retake-tool/Package.resolved') }}
         restore-keys: |
-          flexview-build-${{ runner.os }}-${{ steps.tool.outputs.swift }}-
-          flexview-build-${{ runner.os }}-
+          retake-build-${{ runner.os }}-${{ steps.tool.outputs.swift }}-
+          retake-build-${{ runner.os }}-
 
-    - name: Build flexview
+    - name: Build retake
       if: steps.binary-cache.outputs.cache-hit != 'true'
       shell: bash
-      working-directory: .flexview-tool
-      # Debug, not release: flexview only orchestrates xcodebuild and is I/O bound, so
+      working-directory: .retake-tool
+      # Debug, not release: retake only orchestrates xcodebuild and is I/O bound, so
       # optimisation buys nothing, while release mode recompiles a whole module for any
       # changed file and defeats the incremental restore below.
-      run: swift build --product flexview
+      run: swift build --product retake
 
     # Deliberately not installed here. The repository pins its own Tuist version, and a
     # different one can produce a graph that disagrees with the project, so the caller
@@ -181,7 +181,7 @@ runs:
         fi
         tuist version
 
-    # Not a requirement: flexview falls back to a raw xcodebuild log without it.
+    # Not a requirement: retake falls back to a raw xcodebuild log without it.
     - name: Install xcbeautify
       shell: bash
       run: |
@@ -195,8 +195,8 @@ runs:
       id: base-cache
       uses: actions/cache@v4
       with:
-        path: ${{ runner.temp }}/flexview/base
-        key: flexview-base-${{ runner.os }}-${{ github.event.pull_request.base.sha }}-${{ inputs.simulator }}-${{ inputs.settle }}
+        path: ${{ runner.temp }}/retake/base
+        key: retake-base-${{ runner.os }}-${{ github.event.pull_request.base.sha }}-${{ inputs.simulator }}-${{ inputs.settle }}
 
     - name: Render and compare
       id: review
@@ -204,8 +204,8 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: |
         set -euo pipefail
-        OUT="${{ runner.temp }}/flexview"
-        TOOL="$GITHUB_WORKSPACE/.flexview-tool"
+        OUT="${{ runner.temp }}/retake"
+        TOOL="$GITHUB_WORKSPACE/.retake-tool"
 
         ARGS=(
           review
@@ -227,7 +227,7 @@ runs:
         [ "${{ inputs.verify }}" = "true" ] && ARGS+=(--verify)
         [ "${{ steps.base-cache.outputs.cache-hit }}" = "true" ] && ARGS+=(--reuse-base)
 
-        "$TOOL/.build/debug/flexview" "${ARGS[@]}"
+        "$TOOL/.build/debug/retake" "${ARGS[@]}"
 
         echo "report=$OUT/report.html" >> "$GITHUB_OUTPUT"
 
@@ -249,10 +249,10 @@ runs:
           [ -n "${{ github.event.pull_request.number }}" ] && PUBLISH+=(--pr "${{ github.event.pull_request.number }}")
           [ -n "${{ inputs.s3-endpoint }}" ] && PUBLISH+=(--endpoint "${{ inputs.s3-endpoint }}")
           [ -n "${{ inputs.s3-public-base-url }}" ] && PUBLISH+=(--public-base-url "${{ inputs.s3-public-base-url }}")
-          "$TOOL/.build/debug/flexview" "${PUBLISH[@]}"
+          "$TOOL/.build/debug/retake" "${PUBLISH[@]}"
         fi
 
-        "$TOOL/.build/debug/flexview" comment \
+        "$TOOL/.build/debug/retake" comment \
           --report "$OUT/diff/report.json" \
           --artifact-name "${{ inputs.artifact-name }}" \
           --artifact-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -266,8 +266,8 @@ runs:
       with:
         name: ${{ inputs.artifact-name }}
         path: |
-          ${{ runner.temp }}/flexview/report.html
-          ${{ runner.temp }}/flexview/diff/report.json
+          ${{ runner.temp }}/retake/report.html
+          ${{ runner.temp }}/retake/diff/report.json
         if-no-files-found: warn
 
     # A pull request from a fork gets a read-only token, so commenting would fail. The
@@ -282,8 +282,8 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
       run: |
-        "$GITHUB_WORKSPACE/.flexview-tool/.build/debug/flexview" comment \
-          --report "${{ runner.temp }}/flexview/diff/report.json" \
+        "$GITHUB_WORKSPACE/.retake-tool/.build/debug/retake" comment \
+          --report "${{ runner.temp }}/retake/diff/report.json" \
           --pr "${{ github.event.pull_request.number }}" \
           --artifact-name "${{ inputs.artifact-name }}" \
           --artifact-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

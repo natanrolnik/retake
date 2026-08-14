@@ -1,15 +1,15 @@
-# flexview
+# retake
 
 Renders the SwiftUI `#Preview`s in a repo to PNGs so a pull request can show what its UI
 changes actually look like.
 
-A preview is treated as affected **iff its rendering changed**. flexview renders on the
+A preview is treated as affected **iff its rendering changed**. retake renders on the
 merge base and on the head and compares the images, rather than guessing which previews a
 diff touches from file ownership. That is the only way to catch previews in *downstream*
 modules: change a button in a design-system module and every screen that consumes it
 changes too, without any of those files appearing in the diff.
 
-**iOS needs no changes to your repository.** flexview generates its own throwaway Tuist
+**iOS needs no changes to your repository.** retake generates its own throwaway Tuist
 project to host the previews, renders through it, and deletes it, so there is no snapshot
 target to maintain and nothing added to your dependency graph. macOS still needs a small
 runner target, described below.
@@ -21,14 +21,14 @@ runner target, described below.
 
 ## macOS
 
-macOS renders on the host: no simulator, no XCTest. flexview does not yet generate the
+macOS renders on the host: no simulator, no XCTest. retake does not yet generate the
 host project for macOS the way it does for iOS, so this is the one case where a
 repository adds a target of its own. `Fixtures/SampleMac` is a complete working example.
 
 ```bash
 xcodebuild -workspace SampleMac.xcworkspace -scheme PreviewRunner \
   -destination 'platform=macOS' -derivedDataPath .derived build
-flexview render --platform macos \
+retake render --platform macos \
   --runner .derived/Build/Products/Debug/PreviewRunner.app/Contents/MacOS/PreviewRunner \
   --out ./snapshots
 ```
@@ -36,7 +36,7 @@ flexview render --platform macos \
 ## How rendering works
 
 Preview metadata only exists at runtime, inside a process that links your modules, so
-something has to host them. On iOS flexview writes a throwaway Tuist project into a
+something has to host them. On iOS retake writes a throwaway Tuist project into a
 scratch directory, links your existing targets by path, renders through an XCTest bundle
 in the simulator, and deletes the directory. Your manifests are never touched.
 
@@ -47,7 +47,7 @@ Which host it picks follows what previews need to be reachable:
   leaf change never builds the whole app.
 
 ```bash
-flexview review --repo . --base main --out ./out --simulator "iPhone 17"
+retake review --repo . --base main --out ./out --simulator "iPhone 17"
 ```
 
 That is the whole loop: render the merge base in a git worktree, render the working tree,
@@ -86,7 +86,7 @@ being dropped, so a render failure can never be mistaken for a deleted preview l
 ## Diffing
 
 ```bash
-flexview diff --base ./snapshots-base --head ./snapshots-head --out ./report
+retake diff --base ./snapshots-base --head ./snapshots-head --out ./report
 ```
 
 Every preview lands in exactly one of four buckets:
@@ -118,9 +118,9 @@ removals.
 ## HTML report
 
 ```bash
-flexview diff --base ./base --head ./head --out ./report --html report.html
+retake diff --base ./base --head ./head --out ./report --html report.html
 # or, from an existing report.json
-flexview report --report ./report/report.json --out report.html
+retake report --report ./report/report.json --out report.html
 ```
 
 One self-contained file: images are inlined as data URIs, so it works as a CI artifact, an
@@ -154,7 +154,7 @@ unnamed ones in those files can shift identity when the other file changes. SPM 
 duplicate basenames outright, but Xcode and Tuist targets allow them.
 
 This is undetectable from inside the runner. `SourceBasenameCollision` finds it from the
-build graph's source list instead, and will be wired into `flexview scope`.
+build graph's source list instead, and will be wired into `retake scope`.
 
 ## Determinism
 
@@ -167,12 +167,12 @@ scene, a `.task` load — renders two different pictures on the same commit, and
 up as a change nobody made. Measure it rather than assume it:
 
 ```bash
-flexview verify --graph graph.json --modules Toss --runs 3 --out ./verify
+retake verify --graph graph.json --modules Toss --runs 3 --out ./verify
 ```
 
 It exits non-zero when a preview is not reproducible, so CI can gate on it. `--settle`
 fixes most cases by waiting for that content to arrive, at about two seconds per preview.
-`flexview diff --verify <second render of head>` files anything still unstable in its own
+`retake diff --verify <second render of head>` files anything still unstable in its own
 bucket instead of reporting it as a change.
 
 ## Continuous integration
@@ -192,7 +192,7 @@ swift test
 
 # iOS fixture, end to end, without touching the fixture
 cd Fixtures/SampleApp && tuist graph --format json --no-open --output-path /tmp/fx && cd ../..
-swift run flexview render --platform ios --graph /tmp/fx/graph.json \
+swift run retake render --platform ios --graph /tmp/fx/graph.json \
   --simulator "iPhone 17" --out /tmp/snapshots
 ```
 
