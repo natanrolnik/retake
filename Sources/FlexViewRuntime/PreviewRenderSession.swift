@@ -32,6 +32,8 @@ public final class PreviewRenderSession {
     private var entries: [ManifestEntry] = []
     private var failures: [ManifestFailure] = []
     private var completion: ((Manifest) -> Void)?
+    /// Previews to skip, because a previous attempt died rendering them.
+    private let skipped: Set<PreviewID>
 
     private struct Item {
         var preview: DiscoveredPreview
@@ -49,6 +51,7 @@ public final class PreviewRenderSession {
         self.strategy = strategy
         self.platform = platform
         self.simulator = simulator
+        self.skipped = Set(options.skip.map(PreviewID.init(rawValue:)))
     }
 
     /// - Throws: if the output directory cannot be created. Per-preview failures are
@@ -93,6 +96,16 @@ public final class PreviewRenderSession {
         var claimed: Set<PreviewID> = []
         queue = resolved.assignments.compactMap { assignment in
             guard claimed.insert(assignment.id).inserted else { return nil }
+            guard !skipped.contains(assignment.id) else {
+                failures.append(ManifestFailure(
+                    previewID: assignment.id,
+                    module: assignment.preview.module,
+                    sourceFile: assignment.preview.fileID,
+                    displayName: assignment.preview.displayName,
+                    message: "skipped: rendering it crashed the runner"
+                ))
+                return nil
+            }
             return sources[assignment.preview].map {
                 Item(preview: assignment.preview, id: assignment.id, source: $0)
             }
@@ -104,14 +117,22 @@ public final class PreviewRenderSession {
 
     private func renderNext() {
         guard let next = queue.first else {
+            try? FileManager.default.removeItem(at: inFlightURL)
             finish()
             return
         }
         queue.removeFirst()
 
+        // Rendering runs arbitrary view code in this process, and some of it crashes:
+        // a corrupt image, an unavailable service. Recording what is in flight, and
+        // saving progress after each one, means a crash costs one preview rather than
+        // the whole pass, and the caller can name the preview that did it.
+        try? Data(next.id.rawValue.utf8).write(to: inFlightURL)
+
         strategy.render(preview: next.source) { [weak self] result in
             MainActor.assumeIsolated {
                 self?.record(result: result, for: next)
+                self?.saveProgress()
                 self?.renderNext()
             }
         }
@@ -158,8 +179,17 @@ public final class PreviewRenderSession {
         ))
     }
 
-    private func finish() {
-        completion?(Manifest(
+    private var inFlightURL: URL {
+        options.outputDirectory.appendingPathComponent("in-flight.txt")
+    }
+
+    /// Written after every preview, so a crash leaves everything rendered so far.
+    private func saveProgress() {
+        try? currentManifest().write(to: options.outputDirectory)
+    }
+
+    private func currentManifest() -> Manifest {
+        Manifest(
             configuration: RenderConfiguration(
                 platform: platform,
                 appearance: options.appearance,
@@ -167,7 +197,11 @@ public final class PreviewRenderSession {
             ),
             entries: entries,
             failures: failures
-        ))
+        )
+    }
+
+    private func finish() {
+        completion?(currentManifest())
     }
 
     private func warn(_ message: String) {

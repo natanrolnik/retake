@@ -56,6 +56,12 @@ struct Render: AsyncParsableCommand {
 
     @Option(
         name: .long,
+        help: "How many times to restart past a preview that crashes the runner before giving up."
+    )
+    var maxRenderAttempts: Int = 6
+
+    @Option(
+        name: .long,
         help: "Simulator to render on, as 'name,OS' (iOS only), e.g. 'iPhone 16,18.2'."
     )
     var simulator: String?
@@ -253,14 +259,12 @@ struct Render: AsyncParsableCommand {
             let passDirectory = outputDirectory.appendingPathComponent(".pass-\(index)")
             try? FileManager.default.removeItem(at: passDirectory)
 
-            try render(
+            let manifest = try renderSurvivingCrashes(
                 assignment: assignment,
                 tuistRoot: URL(fileURLWithPath: selection.tuistRoot),
                 sources: sources,
                 into: passDirectory
             )
-
-            let manifest = try Manifest.read(from: passDirectory)
             for entry in manifest.entries {
                 // The PNG names are keyed on the preview id, which is unique across
                 // hosts because the modules are.
@@ -306,13 +310,58 @@ struct Render: AsyncParsableCommand {
         """.utf8))
     }
 
+    /// Renders a host, restarting past any preview that crashes the process.
+    ///
+    /// Preview bodies are arbitrary view code running in one process, and some of it
+    /// brings the process down: a corrupt image, a service that is not there. Without
+    /// this, one such preview costs every other preview in the pass.
+    private func renderSurvivingCrashes(
+        assignment: HostAssignment,
+        tuistRoot: URL,
+        sources: RuntimeSources,
+        into passDirectory: URL
+    ) throws -> Manifest {
+        var crashers: [PreviewID] = []
+
+        for attempt in 1...maxRenderAttempts {
+            try? render(
+                assignment: assignment,
+                tuistRoot: tuistRoot,
+                sources: sources,
+                into: passDirectory,
+                skipping: crashers
+            )
+
+            // The runner saves after every preview, so a manifest exists even when the
+            // process died part way.
+            let manifest = try? Manifest.read(from: passDirectory)
+            let inFlight = try? String(
+                contentsOf: passDirectory.appendingPathComponent("in-flight.txt"),
+                encoding: .utf8
+            )
+
+            guard let stalled = inFlight?.trimmingCharacters(in: .whitespacesAndNewlines), !stalled.isEmpty else {
+                guard let manifest else { throw RenderError.runnerFailed(exitCode: 1) }
+                return manifest
+            }
+
+            let culprit = PreviewID(rawValue: stalled)
+            crashers.append(culprit)
+            print("flexview: \(culprit) crashed the runner; retrying without it (\(attempt) of \(maxRenderAttempts))")
+            try? FileManager.default.removeItem(at: passDirectory.appendingPathComponent("in-flight.txt"))
+        }
+
+        throw RenderError.tooManyCrashes(crashers.map(\.rawValue))
+    }
+
     /// Generates a throwaway Tuist project for one host, renders through it, and removes
     /// it. The repository's own manifests are never modified.
     private func render(
         assignment: HostAssignment,
         tuistRoot: URL,
         sources: RuntimeSources,
-        into passDirectory: URL
+        into passDirectory: URL,
+        skipping crashers: [PreviewID] = []
     ) throws {
         // Inside the Tuist root so the generated project inherits the repo's config and
         // ProjectDescriptionHelpers, which targets it links by path depend on.
@@ -351,7 +400,11 @@ struct Render: AsyncParsableCommand {
                 .appendingPathComponent("\(HostProject.projectName).xcworkspace").path,
             project: nil,
             modules: assignment.modules,
-            out: passDirectory
+            out: passDirectory,
+            skipping: crashers,
+            hostIsFromRepository: {
+                if case .existingApp = assignment.host { return true } else { return false }
+            }()
         )
     }
 
@@ -367,7 +420,9 @@ struct Render: AsyncParsableCommand {
         workspace: String?,
         project: String?,
         modules: [String]? = nil,
-        out: URL? = nil
+        out: URL? = nil,
+        skipping crashers: [PreviewID] = [],
+        hostIsFromRepository: Bool = false
     ) throws {
         let modules = modules ?? self.modules
         let outputDirectory = out ?? URL(fileURLWithPath: self.out)
@@ -381,9 +436,14 @@ struct Render: AsyncParsableCommand {
         if let project { arguments += ["-project", project] }
         if let derivedData { arguments += ["-derivedDataPath", derivedData] }
         arguments += ["-destination", Self.destination(for: simulator)]
-        // Signing a throwaway host for the simulator is pointless and fails on machines
-        // with no development identity.
-        arguments += ["CODE_SIGNING_ALLOWED=NO"]
+        // Only for a host flexview generated itself, which has no entitlements to lose.
+        // An app from the repository must keep its own: simulator builds carry
+        // entitlements through an ad-hoc signature, and without one an app that reaches
+        // for a CloudKit container gets a container that does not exist and traps on
+        // launch. Previews of that app then never render at all.
+        if !hostIsFromRepository {
+            arguments += ["CODE_SIGNING_ALLOWED=NO"]
+        }
 
         // xcodebuild forwards TEST_RUNNER_-prefixed variables from its own environment
         // into the test process with the prefix stripped. They must be environment
@@ -400,6 +460,10 @@ struct Render: AsyncParsableCommand {
             environment["TEST_RUNNER_\(key)"] = value
         }
         if settle { environment["TEST_RUNNER_\(RunnerEnvironment.settle)"] = "1" }
+        if !crashers.isEmpty {
+            // Newline separated: preview ids contain commas.
+            environment["TEST_RUNNER_\(RunnerEnvironment.skip)"] = crashers.map(\.rawValue).joined(separator: "\n")
+        }
         if !modules.isEmpty {
             environment["TEST_RUNNER_\(RunnerEnvironment.modules)"] = modules.joined(separator: ",")
         }
@@ -472,6 +536,7 @@ enum RunnerEnvironment {
     static let appearance = "FLEXVIEW_APPEARANCE"
     static let modules = "FLEXVIEW_MODULES"
     static let settle = "FLEXVIEW_SETTLE"
+    static let skip = "FLEXVIEW_SKIP"
 }
 
 enum BuildSettings {
@@ -494,6 +559,7 @@ enum RenderError: Error, CustomStringConvertible {
     case runnerTimedOut(seconds: Int)
     case missingScheme
     case buildSettingsMissing
+    case tooManyCrashes([String])
 
     var description: String {
         switch self {
@@ -507,6 +573,11 @@ enum RenderError: Error, CustomStringConvertible {
             "No --scheme to build."
         case .buildSettingsMissing:
             "xcodebuild -showBuildSettings did not report BUILT_PRODUCTS_DIR and EXECUTABLE_PATH."
+        case .tooManyCrashes(let previews):
+            """
+            Gave up after \(previews.count) previews crashed the runner: \
+            \(previews.joined(separator: ", ")). Render them by hand to see why.
+            """
         }
     }
 }

@@ -22,17 +22,21 @@ public struct RunnerOptions: Sendable {
     /// seconds per preview, and is the difference between a reproducible render and a
     /// flaky one for views whose content arrives late.
     public var settle: Bool
+    /// Preview ids a previous attempt died on.
+    public var skip: [String]
 
     public init(
         outputDirectory: URL,
         appearance: Appearance = .light,
         modules: [String]? = nil,
-        settle: Bool = false
+        settle: Bool = false,
+        skip: [String] = []
     ) {
         self.outputDirectory = outputDirectory
         self.appearance = appearance
         self.modules = modules
         self.settle = settle
+        self.skip = skip
     }
 
     public enum EnvironmentKey {
@@ -40,6 +44,7 @@ public struct RunnerOptions: Sendable {
         public static let appearance = "FLEXVIEW_APPEARANCE"
         public static let modules = "FLEXVIEW_MODULES"
         public static let settle = "FLEXVIEW_SETTLE"
+        public static let skip = "FLEXVIEW_SKIP"
     }
 
     public enum Error: Swift.Error, CustomStringConvertible {
@@ -82,7 +87,11 @@ public struct RunnerOptions: Sendable {
             outputDirectory: URL(fileURLWithPath: output),
             appearance: appearance,
             modules: modules,
-            settle: environment[EnvironmentKey.settle] == "1"
+            settle: environment[EnvironmentKey.settle] == "1",
+            // Newline separated: preview ids contain commas.
+            skip: environment[EnvironmentKey.skip]?
+                .split(separator: "\n")
+                .map(String.init) ?? []
         )
     }
 }
