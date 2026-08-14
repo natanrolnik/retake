@@ -59,6 +59,8 @@ public struct TargetGraph: Sendable {
         public var isExternal: Bool
         /// Tuist destinations, e.g. iPhone, iPad, appleTv, appleWatch, mac.
         public var destinations: [String]
+        /// Needed to clear a stale install of a host app off the simulator.
+        public var bundleID: String?
 
         public init(
             id: TargetID,
@@ -68,7 +70,8 @@ public struct TargetGraph: Sendable {
             resources: [String],
             buildableFolders: [BuildableFolder] = [],
             isExternal: Bool = false,
-            destinations: [String] = []
+            destinations: [String] = [],
+            bundleID: String? = nil
         ) {
             self.id = id
             self.productName = productName
@@ -78,6 +81,7 @@ public struct TargetGraph: Sendable {
             self.buildableFolders = buildableFolders
             self.isExternal = isExternal
             self.destinations = destinations
+            self.bundleID = bundleID
         }
 
         /// Whether this target can run on the platform being rendered.

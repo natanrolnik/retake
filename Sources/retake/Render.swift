@@ -195,6 +195,19 @@ struct Render: AsyncParsableCommand {
         }
     }
 
+    /// The bundle id of the app hosting this pass, when it is one from the repository.
+    /// A host retake synthesised has a fixed id it controls.
+    private func hostBundleID(for assignment: HostAssignment) -> String? {
+        switch assignment.host {
+        case .existingApp(let app):
+            guard let graph else { return nil }
+            return (try? TuistGraphParser.parse(contentsOf: URL(fileURLWithPath: graph)))?
+                .targets[app]?.bundleID
+        case .synthesized:
+            return "dev.retake.host.app"
+        }
+    }
+
     /// Turns `--files` paths into the `#fileID` values the runtime matches on, which are
     /// "Module/Basename.swift". The module comes from whichever target owns the file.
     private func fileIDs() -> [String] {
@@ -532,7 +545,8 @@ struct Render: AsyncParsableCommand {
             skipping: crashers,
             hostIsFromRepository: {
                 if case .existingApp = assignment.host { return true } else { return false }
-            }()
+            }(),
+            hostBundleID: hostBundleID(for: assignment)
         )
     }
 
@@ -550,7 +564,8 @@ struct Render: AsyncParsableCommand {
         modules: [String]? = nil,
         out: URL? = nil,
         skipping crashers: [PreviewID] = [],
-        hostIsFromRepository: Bool = false
+        hostIsFromRepository: Bool = false,
+        hostBundleID: String? = nil
     ) throws {
         let modules = modules ?? self.modules
         let outputDirectory = out ?? URL(fileURLWithPath: self.out)
@@ -564,7 +579,8 @@ struct Render: AsyncParsableCommand {
         if let project { arguments += ["-project", project] }
         if let derivedData { arguments += ["-derivedDataPath", derivedData] }
         let device = try resolvedSimulator()
-        arguments += ["-destination", Self.destination(for: device)]
+        clearPreviousInstall(of: hostBundleID, on: device)
+        arguments += ["-destination", Self.destination(for: device?.descriptor)]
         // Only for a host retake generated itself, which has no entitlements to lose.
         // An app from the repository must keep its own: simulator builds carry
         // entitlements through an ad-hoc signature, and without one an app that reaches
@@ -600,7 +616,7 @@ struct Render: AsyncParsableCommand {
             environment["TEST_RUNNER_\(RunnerEnvironment.modules)"] = modules.joined(separator: ",")
         }
 
-        print("retake: running \(scheme) on \(device)")
+        print("retake: running \(scheme) on \(device?.descriptor ?? "the default simulator")")
         let command = XcodeBuild.command(arguments: arguments + ["test"], pretty: pretty)
         let result = try Shell.run(
             command.executable,
@@ -623,12 +639,28 @@ struct Render: AsyncParsableCommand {
     }
 
     /// The simulator to use, chosen from the machine when the caller named none.
-    private func resolvedSimulator() throws -> String {
-        if let simulator, !simulator.isEmpty { return simulator }
+    private func resolvedSimulator() throws -> SimulatorPicker.Device? {
+        if let simulator, !simulator.isEmpty {
+            return try SimulatorPicker.find(descriptor: simulator)
+                ?? SimulatorPicker.Device(name: simulator, runtime: "", isBooted: false, udid: "")
+        }
         let picked = try SimulatorPicker.pick()
         // Printed because a render is only comparable to another on the same device.
         print("retake: no --simulator given, using \(picked.descriptor)\(picked.isBooted ? " (already booted)" : "")")
-        return picked.descriptor
+        return picked
+    }
+
+    /// Removes a previous install of the host app from the simulator.
+    ///
+    /// The base and head passes build the same app from different directories, a git
+    /// worktree and the checkout, and installing the second over the first left the app
+    /// unable to launch: the test runner waited nine minutes for a connection that never
+    /// came. Uninstalling first also means each pass starts from the same state, which a
+    /// pixel comparison wants anyway.
+    private func clearPreviousInstall(of bundleID: String?, on device: SimulatorPicker.Device?) {
+        guard let bundleID, let device, !device.udid.isEmpty else { return }
+        _ = try? Shell.run("/usr/bin/xcrun", ["simctl", "terminate", device.udid, bundleID])
+        _ = try? Shell.run("/usr/bin/xcrun", ["simctl", "uninstall", device.udid, bundleID])
     }
 
     private static func destination(for simulator: String?) -> String {

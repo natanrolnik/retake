@@ -21,6 +21,8 @@ enum SimulatorPicker {
         var name: String
         var runtime: String
         var isBooted: Bool
+        /// What simctl needs; a name is ambiguous across runtimes.
+        var udid: String
 
         /// What `--simulator` accepts, and what a caller can pin.
         var descriptor: String { "\(name),\(runtime)" }
@@ -37,13 +39,27 @@ enum SimulatorPicker {
         }
     }
 
-    /// - Returns: a booted simulator if there is one, otherwise the newest iPhone.
-    static func pick() throws -> Device {
+    /// Finds the device a descriptor names, so a caller who pinned one can still be
+    /// matched to a udid.
+    static func find(descriptor: String) throws -> Device? {
+        let parts = descriptor.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        let name = parts.first ?? descriptor
+        let runtime = parts.count > 1 ? parts[1] : nil
+        let devices = try all()
+        return devices.first { $0.name == name && (runtime == nil || $0.runtime == runtime) }
+    }
+
+    private static func all() throws -> [Device] {
         let result = try Shell.runChecked(
             "/usr/bin/xcrun",
             ["simctl", "list", "devices", "available", "--json"]
         )
-        let devices = try parse(result.standardOutput)
+        return try parse(result.standardOutput)
+    }
+
+    /// - Returns: a booted simulator if there is one, otherwise the newest iPhone.
+    static func pick() throws -> Device {
+        let devices = try all()
         guard !devices.isEmpty else { throw Error.noneAvailable }
 
         // A booted device saves the minutes a cold boot costs, and is almost always the
@@ -79,7 +95,8 @@ enum SimulatorPicker {
                 devices.append(Device(
                     name: name,
                     runtime: runtime,
-                    isBooted: (entry["state"] as? String) == "Booted"
+                    isBooted: (entry["state"] as? String) == "Booted",
+                    udid: (entry["udid"] as? String) ?? ""
                 ))
             }
         }

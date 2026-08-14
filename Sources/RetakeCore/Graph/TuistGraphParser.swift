@@ -78,7 +78,8 @@ public enum TuistGraphParser {
                     resources: paths(in: (target["resources"] as? [String: Any])?["resources"]),
                     buildableFolders: folders.map(\.folder),
                     isExternal: isExternalProject(projectPath),
-                    destinations: (target["destinations"] as? [String]) ?? []
+                    destinations: (target["destinations"] as? [String]) ?? [],
+                    bundleID: target["bundleId"] as? String
                 )
             }
         }
