@@ -9,13 +9,15 @@ diff touches from file ownership. That is the only way to catch previews in *dow
 modules: change a button in a design-system module and every screen that consumes it
 changes too, without any of those files appearing in the diff.
 
-Status: rendering and diffing are usable locally on macOS. Scoping, publishing, PR
-comments and CI are not built yet.
+**iOS needs no changes to your repository.** flexview generates its own throwaway Tuist
+project to host the previews, renders through it, and deletes it, so there is no snapshot
+target to maintain and nothing added to your dependency graph. macOS still needs a small
+runner target, described below.
 
 ## Requirements
 
 - macOS 14+, Xcode 16+
-- A **runner target** in the host repo (see below)
+- A Tuist project
 
 ## macOS
 
@@ -31,43 +33,26 @@ flexview render --platform macos \
   --out ./snapshots
 ```
 
-## Adding a runner target
+## How rendering works
 
-flexview cannot render your previews from the outside: preview metadata only exists at
-runtime, inside a binary that links your modules. So the host repo needs one small target
-that links the modules you want rendered plus `FlexViewRuntime`.
+Preview metadata only exists at runtime, inside a process that links your modules, so
+something has to host them. On iOS flexview writes a throwaway Tuist project into a
+scratch directory, links your existing targets by path, renders through an XCTest bundle
+in the simulator, and deletes the directory. Your manifests are never touched.
 
-On macOS the runner is a plain app, with no simulator and no XCTest involved. Its entire
-source is:
+Which host it picks follows what previews need to be reachable:
 
-```swift
-import DesignSystem
-import Feature
-import FlexViewRuntime
-
-// Keeps the linker from stripping modules whose symbols are unused here; their previews
-// are only reachable through runtime metadata.
-_ = PrimaryButton.self
-_ = CheckoutScreen.self
-
-MacRunner.main()
-```
-
-Make it an **app**, not a command line tool. Xcode then embeds and re-signs the
-SnapshotPreviews framework with an identity matching the host, which a loose ad-hoc signed
-binary does not get; macOS library validation rejects that combination at launch.
-
-`Fixtures/SampleApp` is a complete working example, wired up with Tuist.
-
-## Rendering
+- an app in scope hosts them itself, since one app cannot link another;
+- frameworks only, and it synthesises an empty app linking just those frameworks, so a
+  leaf change never builds the whole app.
 
 ```bash
-# Against a runner you already built
-flexview render --runner path/to/PreviewRunner.app/Contents/MacOS/PreviewRunner --out ./snapshots
-
-# Or let flexview build it
-flexview render --scheme PreviewRunner --workspace App.xcworkspace --out ./snapshots
+flexview review --repo . --base main --out ./out --simulator "iPhone 17"
 ```
+
+That is the whole loop: render the merge base in a git worktree, render the working tree,
+diff, and write the report. Individual stages are available as `scope`, `render`, `diff`,
+`report`, `publish`, `comment` and `verify`.
 
 Output is a directory of PNGs plus `manifest.json`, one entry per preview:
 
@@ -91,7 +76,8 @@ Useful options:
 | --- | --- |
 | `--appearance light\|dark` | Forced, never inherited from the host |
 | `--modules A B C` | Render only these modules |
-| `--timeout <seconds>` | Kill the runner if it hangs (default 600) |
+| `--timeout <seconds>` | Kill the runner if it hangs |
+| `--settle` | Wait for asynchronously loaded content before capturing |
 | `--out <dir>` | Where PNGs and `manifest.json` go |
 
 Previews that fail to render are recorded in `manifest.json` under `failures` rather than
@@ -173,10 +159,30 @@ build graph's source list instead, and will be wired into `flexview scope`.
 ## Determinism
 
 The pixel diff is worthless if rendering is noisy, so the renderer pins what it can:
-appearance is forced rather than inherited, and the runner is an accessory app with no
-Dock icon or menu bar to steal focus. Repeated renders of the same commit on one machine
-produce byte-identical PNGs; this is verified in the fixture, and cross-machine
-reproducibility is not yet established.
+appearance is forced rather than inherited, and the runner has no Dock icon or menu bar to
+steal focus.
+
+That is not enough on its own. A view whose content arrives asynchronously — a RealityKit
+scene, a `.task` load — renders two different pictures on the same commit, and then shows
+up as a change nobody made. Measure it rather than assume it:
+
+```bash
+flexview verify --graph graph.json --modules Toss --runs 3 --out ./verify
+```
+
+It exits non-zero when a preview is not reproducible, so CI can gate on it. `--settle`
+fixes most cases by waiting for that content to arrive, at about two seconds per preview.
+`flexview diff --verify <second render of head>` files anything still unstable in its own
+bucket instead of reporting it as a change.
+
+## Continuous integration
+
+`action.yml` is a composite action. The report is uploaded as an artifact and repeated in
+the job summary; with `s3-bucket` set, images are uploaded and the comment shows them
+inline. `s3-url-mode` chooses between `public`, `cdn` and `presigned`.
+
+See `.github/workflows/preview-snapshots.yml` for a working example, including assuming an
+AWS role by OIDC rather than storing a key.
 
 ## Development
 
@@ -184,15 +190,10 @@ reproducibility is not yet established.
 swift build
 swift test
 
-# Fixture end to end
-cd Fixtures/SampleApp
-tuist install && tuist generate --no-open
-xcodebuild -workspace SampleApp.xcworkspace -scheme PreviewRunner \
-  -configuration Debug -destination 'platform=macOS' -derivedDataPath .derived build
-cd ../..
-swift run flexview render \
-  --runner Fixtures/SampleApp/.derived/Build/Products/Debug/PreviewRunner.app/Contents/MacOS/PreviewRunner \
-  --out /tmp/snapshots
+# iOS fixture, end to end, without touching the fixture
+cd Fixtures/SampleApp && tuist graph --format json --no-open --output-path /tmp/fx && cd ../..
+swift run flexview render --platform ios --graph /tmp/fx/graph.json \
+  --simulator "iPhone 17" --out /tmp/snapshots
 ```
 
 The SnapshotPreviews dependency is pinned to a `main` revision rather than a tag: the
