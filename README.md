@@ -17,6 +17,20 @@ comments and CI are not built yet.
 - macOS 14+, Xcode 16+
 - A **runner target** in the host repo (see below)
 
+## macOS
+
+macOS renders on the host: no simulator, no XCTest. flexview does not yet generate the
+host project for macOS the way it does for iOS, so this is the one case where a
+repository adds a target of its own. `Fixtures/SampleMac` is a complete working example.
+
+```bash
+xcodebuild -workspace SampleMac.xcworkspace -scheme PreviewRunner \
+  -destination 'platform=macOS' -derivedDataPath .derived build
+flexview render --platform macos \
+  --runner .derived/Build/Products/Debug/PreviewRunner.app/Contents/MacOS/PreviewRunner \
+  --out ./snapshots
+```
+
 ## Adding a runner target
 
 flexview cannot render your previews from the outside: preview metadata only exists at

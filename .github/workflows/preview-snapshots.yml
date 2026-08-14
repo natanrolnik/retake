@@ -17,6 +17,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      # Lets the job mint a short lived OIDC token, which is exchanged for AWS
+      # credentials. Without this there is no token to exchange.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,11 +34,15 @@ jobs:
       # the one this repository pins.
       - uses: jdx/mise-action@v2
 
+      # No stored access key: the role is assumed with a token minted for this run, and
+      # the credentials it returns expire with the job. The role trusts only this
+      # repository, and can write nothing but this bucket's flexview/ prefix.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::949110043038:role/flexview-ci
+          aws-region: us-east-1
+
       - uses: ./
-        env:
-          # Scoped to PutObject/GetObject on this bucket's flexview/* prefix only.
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         with:
           # Build the tool from this pull request rather than from main, so a change to
           # flexview is exercised by its own fixture before it is released.

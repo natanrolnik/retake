@@ -11,3 +11,4 @@ DerivedData/
 # Tuist generated artifacts
 Derived/
 Tuist/.build/
+Fixtures/**/.derived*/
