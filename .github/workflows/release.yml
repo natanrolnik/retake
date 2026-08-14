@@ -20,6 +20,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The action installs a version by default, and a default that disagrees with the
+      # tag would ship an action that installs the wrong tool.
+      - name: Check the action's default version matches the tag
+        run: |
+          set -euo pipefail
+          DEFAULT=$(awk '/^  retake-version:/{f=1} f && /default:/{gsub(/[^0-9.]/, "", $2); print $2; exit}' action.yml)
+          if [ "$DEFAULT" != "${{ github.ref_name }}" ]; then
+            echo "::error::action.yml defaults retake-version to '$DEFAULT' but the tag is '${{ github.ref_name }}'"
+            exit 1
+          fi
+
       - name: Build
         run: swift build -c release --product retake --arch ${{ matrix.arch }}
 
