@@ -75,6 +75,13 @@ struct Review: AsyncParsableCommand {
     var cacheProfile: String?
 
     @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: "Extra environment for the render process, as KEY=VALUE."
+    )
+    var env: [String] = ["SWIFT_DEPENDENCIES_CONTEXT=preview"]
+
+    @Option(
         name: [.customLong("hosts"), .customLong("host")],
         parsing: .upToNextOption,
         help: "App targets allowed to host the previews."
@@ -234,6 +241,7 @@ struct Review: AsyncParsableCommand {
         arguments += ["--tuist", tuist]
         if let cacheProfile { arguments += ["--cache-profile", cacheProfile] }
         if !hosts.isEmpty { arguments += ["--hosts"] + hosts }
+        if !env.isEmpty { arguments += ["--env"] + env }
         // The base renders from a worktree, which has no version manager config, so
         // Tuist is always launched from the project under review.
         arguments += ["--tuist-working-directory", URL(fileURLWithPath: repo).standardizedFileURL.path]

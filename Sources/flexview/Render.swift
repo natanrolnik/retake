@@ -113,6 +113,13 @@ struct Render: AsyncParsableCommand {
     )
     var cacheProfile: String?
 
+    @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: "Extra environment for the render process, as KEY=VALUE. Defaults to telling swift-dependencies it is in a preview, since it otherwise treats the runner as a test and fails any dependency without a test implementation."
+    )
+    var env: [String] = ["SWIFT_DEPENDENCIES_CONTEXT=preview"]
+
     func validate() throws {
         if workspace != nil, project != nil {
             throw ValidationError("--workspace and --project are mutually exclusive.")
@@ -155,6 +162,17 @@ struct Render: AsyncParsableCommand {
         }
     }
 
+    /// Parsed `--env`, dropping anything that is not KEY=VALUE.
+    private var runnerEnvironment: [String: String] {
+        Dictionary(
+            env.compactMap { entry in
+                guard let separator = entry.firstIndex(of: "=") else { return nil }
+                return (String(entry[entry.startIndex..<separator]), String(entry[entry.index(after: separator)...]))
+            },
+            uniquingKeysWith: { _, last in last }
+        )
+    }
+
     private func runOnHost() throws {
         let outputDirectory = URL(fileURLWithPath: out)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -172,6 +190,9 @@ struct Render: AsyncParsableCommand {
         var environment = ProcessInfo.processInfo.environment
         environment[RunnerEnvironment.output] = outputDirectory.path
         environment[RunnerEnvironment.appearance] = appearance.rawValue
+        for (key, value) in runnerEnvironment {
+            environment[key] = value
+        }
         if settle { environment[RunnerEnvironment.settle] = "1" }
         if !modules.isEmpty {
             environment[RunnerEnvironment.modules] = modules.joined(separator: ",")
@@ -265,10 +286,24 @@ struct Render: AsyncParsableCommand {
             failures: failures
         ).write(to: outputDirectory)
 
+        let manifest = try Manifest.read(from: outputDirectory)
         print("flexview: \(entries.count) previews rendered, \(failures.count) failed")
         for failure in failures {
             print("  failed: \(failure.previewID) — \(failure.message)")
         }
+        warnIfIdentical(manifest)
+    }
+
+    /// Reports the case where rendering "succeeded" but produced nothing.
+    private func warnIfIdentical(_ manifest: Manifest) {
+        guard manifest.rendersAreAllIdentical else { return }
+        FileHandle.standardError.write(Data("""
+        flexview: warning: all \(manifest.entries.count) previews rendered to an identical \
+        image, which means none of them actually drew. The window was captured before any \
+        content reached it, or the host never handed the view over. A diff of two such \
+        passes will report no changes at all.
+
+        """.utf8))
     }
 
     /// Generates a throwaway Tuist project for one host, renders through it, and removes
@@ -358,6 +393,12 @@ struct Render: AsyncParsableCommand {
         var environment = ProcessInfo.processInfo.environment
         environment["TEST_RUNNER_\(RunnerEnvironment.output)"] = outputDirectory.path
         environment["TEST_RUNNER_\(RunnerEnvironment.appearance)"] = appearance.rawValue
+        // Not XCODE_RUNNING_FOR_PREVIEWS: setting that makes SwiftUI hand rendering to
+        // Xcode's own preview harness, which is not there, and every preview comes back
+        // as an identical blank window. Target the library that actually branches.
+        for (key, value) in runnerEnvironment {
+            environment["TEST_RUNNER_\(key)"] = value
+        }
         if settle { environment["TEST_RUNNER_\(RunnerEnvironment.settle)"] = "1" }
         if !modules.isEmpty {
             environment["TEST_RUNNER_\(RunnerEnvironment.modules)"] = modules.joined(separator: ",")
@@ -398,6 +439,7 @@ struct Render: AsyncParsableCommand {
         for failure in manifest.failures {
             print("  failed: \(failure.previewID) — \(failure.message)")
         }
+        warnIfIdentical(manifest)
     }
 
     private func buildRunnerExecutable() throws -> URL {

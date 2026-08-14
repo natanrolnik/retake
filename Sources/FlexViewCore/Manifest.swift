@@ -117,6 +117,14 @@ public struct ManifestFailure: Codable, Sendable, Equatable {
 public extension Manifest {
     static let fileName = "manifest.json"
 
+    /// Every preview rendering to the same image means nothing was really rendered: the
+    /// window was captured before any content reached it, or the host never handed the
+    /// view over. It is worth its own check because the render otherwise reports
+    /// complete success, and a diff of two such passes shows no changes at all.
+    var rendersAreAllIdentical: Bool {
+        entries.count > 1 && Set(entries.map(\.sha256)).count == 1
+    }
+
     static func encoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
