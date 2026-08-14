@@ -151,13 +151,14 @@ struct ScopeResolverTests {
         #expect(scope.targets.count == 3)
     }
 
-    @Test("Ignored paths do not widen the scope, and are reported")
+    @Test("A glob keeps an unowned file from widening the scope")
     func ignoredPaths() throws {
         let graph = try sampleGraph()
         let scope = ScopeResolver.resolve(
             graph: graph,
             changedFiles: ["/repo/DesignSystem/Button.swift", "/repo/README.md"],
-            ignored: ["/repo/README.md"]
+            ignored: [PathGlob("*.md")],
+            root: "/repo"
         )
 
         #expect(!scope.isEverything)
@@ -185,5 +186,41 @@ struct ScopeResolverTests {
         )
 
         #expect(scope.isEverything)
+    }
+}
+
+
+@Suite("Path globs")
+struct PathGlobTests {
+    @Test("A directory pattern matches nested files")
+    func nestedFiles() {
+        // The case that motivated this: adding the workflow that runs flexview must not
+        // make flexview render the entire repository.
+        let glob = PathGlob(".github/**")
+
+        #expect(glob.matches(".github/workflows/preview-snapshots.yml"))
+        #expect(glob.matches("/repo/.github/workflows/ci.yml", relativeTo: "/repo"))
+        #expect(!glob.matches("Sources/App/App.swift"))
+    }
+
+    @Test("A single star also crosses separators, so common patterns do not silently miss")
+    func singleStarCrossesSeparators() {
+        #expect(PathGlob(".github/*").matches(".github/workflows/ci.yml"))
+    }
+
+    @Test("Extension patterns match at any depth when written that way")
+    func extensionPatterns() {
+        #expect(PathGlob("*.md").matches("README.md"))
+        #expect(PathGlob("**/*.md").matches("docs/guide/setup.md"))
+        #expect(!PathGlob("*.md").matches("Sources/Markdown.swift"))
+    }
+
+    @Test("Paths are matched relative to the root, and anything outside it is left absolute")
+    func relativeToRoot() {
+        #expect(PathGlob("Sources/**").matches("/repo/Sources/App.swift", relativeTo: "/repo"))
+        // Outside the root there is nothing to strip, so the absolute path is matched as
+        // given. A permissive pattern still matches it, since * crosses separators.
+        #expect(!PathGlob("Sources/**").matches("/elsewhere/Sources/App.swift", relativeTo: "/repo"))
+        #expect(PathGlob("*.md").matches("/elsewhere/README.md", relativeTo: "/repo"))
     }
 }

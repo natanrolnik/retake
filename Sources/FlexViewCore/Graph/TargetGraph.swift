@@ -116,6 +116,19 @@ public struct TargetGraph: Sendable {
         return reached
     }
 
+    /// Everything the given targets depend on, transitively. The direction an app needs
+    /// to know what it can host.
+    public func transitiveDependencies(of roots: Set<TargetID>) -> Set<TargetID> {
+        var reached = roots
+        var pending = Array(roots)
+        while let current = pending.popLast() {
+            for requirement in dependencies[current] ?? [] where reached.insert(requirement).inserted {
+                pending.append(requirement)
+            }
+        }
+        return reached
+    }
+
     /// Maps an absolute file path to the target that compiles or bundles it.
     public func owner(ofFile path: String) -> TargetID? {
         targets.values.first { $0.owns(path) }?.id

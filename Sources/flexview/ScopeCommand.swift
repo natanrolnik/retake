@@ -27,7 +27,7 @@ struct ScopeCommand: AsyncParsableCommand {
     @Option(
         name: .long,
         parsing: .upToNextOption,
-        help: "Paths that provably cannot affect rendering. Each one is reported."
+        help: "Glob patterns, relative to the repository, for files that cannot affect rendering. Each match is reported."
     )
     var ignore: [String] = []
 
@@ -39,18 +39,19 @@ struct ScopeCommand: AsyncParsableCommand {
         let rootURL = URL(fileURLWithPath: root).standardizedFileURL
 
         let paths = try readChangedFiles().map { absolute($0, relativeTo: rootURL) }
-        let ignored = Set(ignore.map { absolute($0, relativeTo: rootURL) })
+        let ignored = ignore.map(PathGlob.init)
 
         let scope = ScopeResolver.resolve(
             graph: targetGraph,
             changedFiles: paths,
-            ignored: ignored
+            ignored: ignored,
+            root: rootURL.path
         )
 
         for warning in scope.warnings {
             print("flexview: warning: \(warning)")
         }
-        for path in paths where ignored.contains(path) {
+        for path in paths where ignored.matchAny(path, relativeTo: rootURL.path) {
             print("flexview: ignoring \(path)")
         }
         for reason in scope.reasons {

@@ -12,7 +12,7 @@ import Foundation
 /// generated project has to live for Tuist to load the repo's config and helpers.
 enum HostSelector {
     struct Selection {
-        var host: PreviewHost
+        var assignments: [HostAssignment]
         /// Directory holding the repo's Tuist.swift.
         var tuistRoot: String
         var explanation: String
@@ -32,24 +32,32 @@ enum HostSelector {
     static func select(
         graph: TargetGraph,
         modules: [String],
-        explicitHost: String?
+        candidateHosts: [String]
     ) throws -> Selection {
-        let host = try HostResolver.resolve(graph: graph, modules: modules, explicitHost: explicitHost)
-        let anchor = host.linkedTargets[0].project
+        let assignments = try HostResolver.resolve(
+            graph: graph,
+            modules: modules,
+            candidateHosts: candidateHosts
+        )
+        let anchor = assignments[0].host.linkedTargets[0].project
 
-        let explanation = switch host {
-        case .existingApp(let app) where explicitHost != nil:
-            "hosting previews in \(app.name) (--host)"
-        case .existingApp(let app):
-            "hosting previews in \(app.name), which is itself in scope"
-        case .synthesized(let linked):
-            "synthesizing a host app linking \(linked.map(\.name).joined(separator: ", "))"
-        }
+        let explanation = assignments
+            .map { assignment in
+                switch assignment.host {
+                case .existingApp(let app):
+                    "\(app.name) hosting \(assignment.modules.joined(separator: ", "))"
+                case .synthesized(let linked):
+                    "a synthesised host linking \(linked.map(\.name).joined(separator: ", "))"
+                }
+            }
+            .joined(separator: "; ")
 
         return Selection(
-            host: host,
+            assignments: assignments,
             tuistRoot: try tuistRoot(startingAt: anchor),
-            explanation: explanation
+            explanation: assignments.count == 1
+                ? "rendering in \(explanation)"
+                : "\(assignments.count) render passes: \(explanation)"
         )
     }
 

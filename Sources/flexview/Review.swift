@@ -71,6 +71,23 @@ struct Review: AsyncParsableCommand {
     @Option(name: .long, help: "Tuist executable. Pass an absolute path to bypass a version manager shim.")
     var tuist: String = "tuist"
 
+    @Option(name: .long, help: "Tuist binary cache profile for the generated host.")
+    var cacheProfile: String?
+
+    @Option(
+        name: [.customLong("hosts"), .customLong("host")],
+        parsing: .upToNextOption,
+        help: "App targets allowed to host the previews."
+    )
+    var hosts: [String] = []
+
+    @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: "Glob patterns, relative to the repository, for files that cannot affect rendering. Without these a single unowned file widens the scope to everything."
+    )
+    var ignore: [String] = [".github/**", "*.md", "**/*.md", "docs/**", ".gitignore"]
+
     @Option(name: .long, help: "Seconds allowed for each render.")
     var timeout: Int = 1800
 
@@ -113,7 +130,9 @@ struct Review: AsyncParsableCommand {
         if modules.isEmpty {
             let scope = ScopeResolver.resolve(
                 graph: try TuistGraphParser.parse(contentsOf: headGraph),
-                changedFiles: changedFiles.map { URL(fileURLWithPath: repoRoot).appendingPathComponent($0).path }
+                changedFiles: changedFiles.map { URL(fileURLWithPath: repoRoot).appendingPathComponent($0).path },
+                ignored: ignore.map(PathGlob.init),
+                root: repoRoot
             )
             for warning in scope.warnings { print("flexview: warning: \(warning)") }
             for reason in scope.reasons { print("flexview: \(reason)") }
@@ -213,6 +232,8 @@ struct Review: AsyncParsableCommand {
         if let simulator { arguments += ["--simulator", simulator] }
         if settle { arguments += ["--settle"] }
         arguments += ["--tuist", tuist]
+        if let cacheProfile { arguments += ["--cache-profile", cacheProfile] }
+        if !hosts.isEmpty { arguments += ["--hosts"] + hosts }
         // The base renders from a worktree, which has no version manager config, so
         // Tuist is always launched from the project under review.
         arguments += ["--tuist-working-directory", URL(fileURLWithPath: repo).standardizedFileURL.path]

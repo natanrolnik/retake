@@ -48,12 +48,14 @@ public enum ScopeResolver {
     ///
     /// - Parameters:
     ///   - changedFiles: absolute paths.
-    ///   - ignored: paths already judged incapable of affecting rendering. Every one is
-    ///     reported, so the caller can see what was skipped.
+    ///   - ignored: glob patterns for files judged incapable of affecting rendering.
+    ///     Every match is reported, so the caller can see what was skipped.
+    ///   - root: repository root the patterns are written against.
     public static func resolve(
         graph: TargetGraph,
         changedFiles: [String],
-        ignored: Set<String> = []
+        ignored: [PathGlob] = [],
+        root: String = ""
     ) -> Scope {
         var warnings: [String] = []
 
@@ -79,7 +81,7 @@ public enum ScopeResolver {
 
         var seeds: Set<TargetGraph.TargetID> = []
         var unowned: [String] = []
-        for file in changedFiles where !ignored.contains(file) {
+        for file in changedFiles where !ignored.matchAny(file, relativeTo: root) {
             if let owner = graph.owner(ofFile: file) {
                 seeds.insert(owner)
             } else {

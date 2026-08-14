@@ -66,8 +66,12 @@ struct Render: AsyncParsableCommand {
     )
     var graph: String?
 
-    @Option(name: .long, help: "Target to host the previews. Chosen from the graph when omitted.")
-    var host: String?
+    @Option(
+        name: [.customLong("hosts"), .customLong("host")],
+        parsing: .upToNextOption,
+        help: "App targets allowed to host the previews. Without this every app in scope is used, which is rarely wanted in a repository with per-module preview apps."
+    )
+    var hosts: [String] = []
 
     @Option(name: .long, help: "Path to the flexview checkout, if it cannot be inferred.")
     var runtimeSources: String?
@@ -102,6 +106,12 @@ struct Render: AsyncParsableCommand {
         help: "Pipe xcodebuild through xcbeautify when it is available. A full build log buries the few lines worth reading."
     )
     var pretty: Bool = true
+
+    @Option(
+        name: .long,
+        help: "Tuist binary cache profile for the generated host: only-external, all-possible, none, or a custom profile. Reuses prebuilt binaries instead of compiling dependencies from source."
+    )
+    var cacheProfile: String?
 
     func validate() throws {
         if workspace != nil, project != nil {
@@ -206,16 +216,74 @@ struct Render: AsyncParsableCommand {
         let selection = try HostSelector.select(
             graph: targetGraph,
             modules: modules,
-            explicitHost: host
+            candidateHosts: hosts
         )
         print("flexview: \(selection.explanation)")
 
+        let outputDirectory = URL(fileURLWithPath: out)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        var entries: [ManifestEntry] = []
+        var failures: [ManifestFailure] = []
+
+        // One pass per host. Modules are partitioned across hosts, so a preview is
+        // rendered exactly once and the merged manifest has no duplicates.
+        for (index, assignment) in selection.assignments.enumerated() {
+            let passDirectory = outputDirectory.appendingPathComponent(".pass-\(index)")
+            try? FileManager.default.removeItem(at: passDirectory)
+
+            try render(
+                assignment: assignment,
+                tuistRoot: URL(fileURLWithPath: selection.tuistRoot),
+                sources: sources,
+                into: passDirectory
+            )
+
+            let manifest = try Manifest.read(from: passDirectory)
+            for entry in manifest.entries {
+                // The PNG names are keyed on the preview id, which is unique across
+                // hosts because the modules are.
+                let destination = outputDirectory.appendingPathComponent(entry.pngPath)
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.moveItem(
+                    at: passDirectory.appendingPathComponent(entry.pngPath),
+                    to: destination
+                )
+                entries.append(entry)
+            }
+            failures.append(contentsOf: manifest.failures)
+            try? FileManager.default.removeItem(at: passDirectory)
+        }
+
+        try Manifest(
+            configuration: RenderConfiguration(
+                platform: .ios,
+                appearance: appearance,
+                simulator: simulator
+            ),
+            entries: entries,
+            failures: failures
+        ).write(to: outputDirectory)
+
+        print("flexview: \(entries.count) previews rendered, \(failures.count) failed")
+        for failure in failures {
+            print("  failed: \(failure.previewID) — \(failure.message)")
+        }
+    }
+
+    /// Generates a throwaway Tuist project for one host, renders through it, and removes
+    /// it. The repository's own manifests are never modified.
+    private func render(
+        assignment: HostAssignment,
+        tuistRoot: URL,
+        sources: RuntimeSources,
+        into passDirectory: URL
+    ) throws {
         // Inside the Tuist root so the generated project inherits the repo's config and
         // ProjectDescriptionHelpers, which targets it links by path depend on.
-        let root = URL(fileURLWithPath: selection.tuistRoot)
         let hostProject = HostProject(
-            scratchDirectory: root.appendingPathComponent(".flexview-host"),
-            host: selection.host,
+            scratchDirectory: tuistRoot.appendingPathComponent(".flexview-host"),
+            host: assignment.host,
             sources: sources,
             deploymentTarget: deploymentTarget
         )
@@ -233,15 +301,22 @@ struct Render: AsyncParsableCommand {
         // Launched from the Tuist root rather than the scratch directory, and from the
         // caller's directory when given: inside a worktree a version manager shim has
         // no config to resolve a version from.
-        let launchDirectory = tuistWorkingDirectory.map { URL(fileURLWithPath: $0) } ?? root
+        let launchDirectory = tuistWorkingDirectory.map { URL(fileURLWithPath: $0) } ?? tuistRoot
+        var generateArguments = ["generate", "--no-open"]
+        // Reuses the repository's warmed binary cache rather than compiling its
+        // dependencies from source, which is both much faster and avoids inheriting
+        // whatever a from-source build of those dependencies would surface.
+        if let cacheProfile { generateArguments += ["--cache-profile", cacheProfile] }
         try Tuist(command: tuist, workingDirectory: launchDirectory)
-            .run(["generate", "--no-open"], at: hostProject.scratchDirectory)
+            .run(generateArguments, at: hostProject.scratchDirectory)
 
         try runXcodeBuildTest(
             scheme: HostProject.schemeName,
             workspace: hostProject.scratchDirectory
                 .appendingPathComponent("\(HostProject.projectName).xcworkspace").path,
-            project: nil
+            project: nil,
+            modules: assignment.modules,
+            out: passDirectory
         )
     }
 
@@ -252,8 +327,15 @@ struct Render: AsyncParsableCommand {
         try runXcodeBuildTest(scheme: scheme, workspace: workspace, project: project)
     }
 
-    private func runXcodeBuildTest(scheme: String, workspace: String?, project: String?) throws {
-        let outputDirectory = URL(fileURLWithPath: out)
+    private func runXcodeBuildTest(
+        scheme: String,
+        workspace: String?,
+        project: String?,
+        modules: [String]? = nil,
+        out: URL? = nil
+    ) throws {
+        let modules = modules ?? self.modules
+        let outputDirectory = out ?? URL(fileURLWithPath: self.out)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         // The manifest is how success is judged, so never let a stale one look like a
         // fresh render.
@@ -300,7 +382,7 @@ struct Render: AsyncParsableCommand {
             throw RenderError.runnerFailed(exitCode: result.exitCode)
         }
 
-        try report(outputDirectory: outputDirectory)
+        if out == nil { try report(outputDirectory: outputDirectory) }
     }
 
     private static func destination(for simulator: String?) -> String {
