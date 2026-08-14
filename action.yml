@@ -46,7 +46,7 @@ inputs:
   retake-version:
     description: >-
       Released version of retake to install. Defaults to the version this action was
-      referenced by, so pinning the action at 0.2.0 installs retake 0.2.0.
+      referenced by, so pinning the action at a version installs that version of retake.
     required: false
     default: ''
   artifact-name:

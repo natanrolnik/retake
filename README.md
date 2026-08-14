@@ -25,7 +25,7 @@ to maintain, nothing added to your dependency graph.
 ## Install
 
 ```bash
-mise use -g github:natanrolnik/retake@0.2.0
+mise use -g github:natanrolnik/retake@0.3.0
 ```
 
 Or build it:
@@ -72,21 +72,21 @@ retake snapshot --repo . --modules DesignSystem --out ./out   # one module
 retake snapshot --repo . --files A.swift B.swift --out ./out  # specific files
 ```
 
-### Repositories that do not use Tuist
+`--files` works out which modules own those files, so checking one file builds one module
+rather than the world.
 
-Point it at local Swift packages instead of a graph. The generated host then stands on
-its own, declaring those packages as dependencies, so a plain Xcode project with packages
+#### Repositories that do not use Tuist
+
+Point it at local Swift packages instead of a graph. The generated host then stands on its
+own, declaring those packages as dependencies, so a plain Xcode project with packages
 beside it works without changing anything:
 
 ```bash
 retake snapshot --repo . --packages Packages/DesignSystem Packages/StatusKit --out ./out
 ```
 
-Previews that live in the Xcode app target itself are out of reach this way, since only
-the packages are linked.
-
-`--files` works out which modules own those files, so checking one file builds one module
-rather than the world.
+Previews living in the Xcode app target itself are out of reach this way, since only the
+packages are linked.
 
 ### `review` — what changed
 
@@ -202,7 +202,7 @@ jobs:
       - uses: jdx/mise-action@v2  # retake requires Tuist, and does not install it
       - run: tuist install
 
-      - uses: natanrolnik/retake@0.2.0
+      - uses: natanrolnik/retake@0.3.0
         with:
           hosts: MyApp
 ```
@@ -229,7 +229,7 @@ an image source in a comment. Inline images need a bucket.
           role-to-assume: arn:aws:iam::<account>:role/retake-ci
           aws-region: us-east-1
 
-      - uses: natanrolnik/retake@0.2.0
+      - uses: natanrolnik/retake@0.3.0
         with:
           hosts: MyApp
           s3-bucket: my-preview-snapshots
