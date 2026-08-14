@@ -54,6 +54,9 @@ public struct TargetGraph: Sendable {
         public var sources: [String]
         public var resources: [String]
         public var buildableFolders: [BuildableFolder]
+        /// A dependency Tuist generated a project for, rather than a target the
+        /// repository wrote. Nothing here has previews worth rendering.
+        public var isExternal: Bool
 
         public init(
             id: TargetID,
@@ -61,7 +64,8 @@ public struct TargetGraph: Sendable {
             product: String = "",
             sources: [String],
             resources: [String],
-            buildableFolders: [BuildableFolder] = []
+            buildableFolders: [BuildableFolder] = [],
+            isExternal: Bool = false
         ) {
             self.id = id
             self.productName = productName
@@ -69,6 +73,7 @@ public struct TargetGraph: Sendable {
             self.sources = sources
             self.resources = resources
             self.buildableFolders = buildableFolders
+            self.isExternal = isExternal
         }
 
         public func owns(_ path: String) -> Bool {
@@ -140,7 +145,21 @@ public struct TargetGraph: Sendable {
     }
 
     public func isTestBundle(_ id: TargetID) -> Bool {
-        ["unitTests", "uiTests"].contains(targets[id]?.product ?? "")
+        // Tuist writes these snake_cased in the graph ("unit_tests"), not as they are
+        // spelled in a manifest. Matching the manifest spelling silently matched nothing,
+        // and test bundles were linked into hosts.
+        let product = (targets[id]?.product ?? "").replacingOccurrences(of: "_", with: "").lowercased()
+        return product.hasSuffix("tests")
+    }
+
+    /// Targets worth rendering: the repository's own, excluding test bundles.
+    ///
+    /// Without this, "render everything" means every package Tuist generated a project
+    /// for, and a run tries to host SwiftSyntax and GRDB.
+    public var renderableTargets: [Target] {
+        targets.values
+            .filter { !$0.isExternal && !isTestBundle($0.id) }
+            .sorted { $0.id < $1.id }
     }
 
     public var sourcesByModule: [String: [String]] {

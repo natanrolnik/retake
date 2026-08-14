@@ -74,6 +74,9 @@ struct Review: AsyncParsableCommand {
     @Option(name: .long, help: "Tuist binary cache profile for the generated host.")
     var cacheProfile: String?
 
+    @Flag(name: .long, help: "Warm the Tuist cache for the targets about to be rendered.")
+    var warmCache: Bool = false
+
     @Option(
         name: .long,
         parsing: .upToNextOption,
@@ -240,6 +243,7 @@ struct Review: AsyncParsableCommand {
         if settle { arguments += ["--settle"] }
         arguments += ["--tuist", tuist]
         if let cacheProfile { arguments += ["--cache-profile", cacheProfile] }
+        if warmCache { arguments += ["--warm-cache"] }
         if !hosts.isEmpty { arguments += ["--hosts"] + hosts }
         if !env.isEmpty { arguments += ["--env"] + env }
         // The base renders from a worktree, which has no version manager config, so

@@ -127,11 +127,13 @@ public enum ScopeResolver {
         reasons: [String],
         warnings: [String]
     ) -> Scope {
+        // "Everything" means everything the repository wrote, not every package it
+        // depends on.
         Scope(
             isEverything: true,
             reasons: reasons,
             modules: [],
-            targets: Array(graph.targets.keys),
+            targets: graph.renderableTargets.map(\.id),
             warnings: warnings
         )
     }

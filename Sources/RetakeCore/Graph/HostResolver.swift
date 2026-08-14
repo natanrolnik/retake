@@ -71,9 +71,9 @@ public enum HostResolver {
         candidateHosts: [String] = []
     ) throws -> [HostAssignment] {
         let inScope = modules.isEmpty
-            ? Array(graph.targets.values)
+            ? graph.renderableTargets
             : graph.targets.values.filter { modules.contains($0.productName) }
-        let renderable = inScope.filter { !graph.isTestBundle($0.id) }
+        let renderable = inScope.filter { !graph.isTestBundle($0.id) && !$0.isExternal }
         guard !renderable.isEmpty else { throw Error.noTargetsInScope }
 
         let apps: [TargetGraph.Target]

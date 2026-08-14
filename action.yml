@@ -39,6 +39,10 @@ inputs:
     description: Tuist binary cache profile for the generated host (only-external, all-possible, none, or a custom profile). Reuses prebuilt binaries instead of compiling dependencies from source.
     required: false
     default: ''
+  warm-cache:
+    description: Run `tuist cache` for the targets retake is about to render, before rendering them. Turns a from-source build of those modules into a download.
+    required: false
+    default: 'false'
   working-directory:
     description: Path to the Tuist repository to review.
     required: false
@@ -48,7 +52,7 @@ inputs:
       Released version of retake to install. Defaults to the version this action ships
       with, which the release workflow checks against the tag.
     required: false
-    default: '0.3.1'
+    default: '0.4.0'
   artifact-name:
     description: Name of the uploaded artifact.
     required: false
@@ -183,7 +187,10 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
-        set -euo pipefail
+        # Globbing off: the ignore patterns are globs for retake to match, and the shell
+        # would expand them against the working directory first, turning ".github/**"
+        # into a literal path that matches nothing.
+        set -euof pipefail
         OUT="${{ runner.temp }}/retake"
         RETAKE="${{ steps.retake.outputs.bin }}"
 
@@ -204,6 +211,7 @@ runs:
         [ -n "${{ inputs.ignore }}" ] && ARGS+=(--ignore ${{ inputs.ignore }})
         [ -n "${{ inputs.cache-profile }}" ] && ARGS+=(--cache-profile "${{ inputs.cache-profile }}")
         [ "${{ inputs.settle }}" = "true" ] && ARGS+=(--settle)
+        [ "${{ inputs.warm-cache }}" = "true" ] && ARGS+=(--warm-cache)
         [ "${{ inputs.verify }}" = "true" ] && ARGS+=(--verify)
         [ "${{ steps.base-cache.outputs.cache-hit }}" = "true" ] && ARGS+=(--reuse-base)
 

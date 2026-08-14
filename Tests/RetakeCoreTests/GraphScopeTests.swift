@@ -247,3 +247,52 @@ struct FileFilterTests {
         #expect(graph.owner(ofFile: "/repo/Scripts/tool.swift") == nil)
     }
 }
+
+@Suite("Renderable targets")
+struct RenderableTargetTests {
+    private func graph(_ targets: [(String, String, Bool)]) -> TargetGraph {
+        TargetGraph(
+            targets: Dictionary(uniqueKeysWithValues: targets.map { name, product, external in
+                let id = TargetGraph.TargetID(project: "/repo", name: name)
+                return (id, TargetGraph.Target(
+                    id: id,
+                    productName: name,
+                    product: product,
+                    sources: [],
+                    resources: [],
+                    isExternal: external
+                ))
+            }),
+            dependencies: [:]
+        )
+    }
+
+    @Test("Test bundles are recognised however the graph spells them")
+    func testBundleSpelling() {
+        // Tuist writes "unit_tests"; matching only the manifest spelling meant test
+        // bundles were treated as renderable and linked into hosts.
+        let sample = graph([("AppTests", "unit_tests", false), ("UITests", "uiTests", false)])
+
+        #expect(sample.isTestBundle(TargetGraph.TargetID(project: "/repo", name: "AppTests")))
+        #expect(sample.isTestBundle(TargetGraph.TargetID(project: "/repo", name: "UITests")))
+    }
+
+    @Test("Dependencies are not rendered, however many of them there are")
+    func externalsExcluded() {
+        let sample = graph([
+            ("App", "app", false),
+            ("Theme", "staticFramework", false),
+            ("AppTests", "unit_tests", false),
+            ("SwiftSyntax", "staticFramework", true),
+            ("GRDB", "framework", true),
+        ])
+
+        #expect(sample.renderableTargets.map(\.id.name) == ["App", "Theme"])
+    }
+
+    @Test("A Tuist generated dependency project is external")
+    func externalProjectPaths() {
+        #expect(TuistGraphParser.isExternalProject("/repo/Tuist/.build/tuist-derived/Projects/GRDB"))
+        #expect(!TuistGraphParser.isExternalProject("/repo/Modules/Theme"))
+    }
+}

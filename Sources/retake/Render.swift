@@ -86,6 +86,12 @@ struct Render: AsyncParsableCommand {
     )
     var packages: [String] = []
 
+    @Flag(
+        name: .long,
+        help: "Run `tuist cache` for the targets about to be rendered, before rendering them. Turns a from-source build of those modules into a download."
+    )
+    var warmCache: Bool = false
+
     @Option(
         name: [.customLong("hosts"), .customLong("host")],
         parsing: .upToNextOption,
@@ -296,6 +302,20 @@ struct Render: AsyncParsableCommand {
 
         let outputDirectory = URL(fileURLWithPath: out)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        if warmCache {
+            // retake knows exactly which targets it is about to build, so warm those and
+            // not the whole repository.
+            let targets = selection.assignments
+                .flatMap(\.host.linkedTargets)
+                .map(\.name)
+                .sorted()
+            print("retake: warming the Tuist cache for \(targets.joined(separator: ", "))")
+            let launch = tuistWorkingDirectory.map { URL(fileURLWithPath: $0) }
+                ?? URL(fileURLWithPath: selection.tuistRoot)
+            try Tuist(command: tuist, workingDirectory: launch)
+                .run(["cache"] + targets, streamOutput: true)
+        }
 
         var entries: [ManifestEntry] = []
         var failures: [ManifestFailure] = []

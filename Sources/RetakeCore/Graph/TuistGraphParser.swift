@@ -34,6 +34,12 @@ public enum TuistGraphParser {
         try parse(try Data(contentsOf: url))
     }
 
+    /// Tuist writes a project per external package under its own build directory, so a
+    /// project path inside one is a dependency rather than something the repository wrote.
+    static func isExternalProject(_ path: String) -> Bool {
+        path.contains("/.build/tuist-derived/") || path.contains("/Tuist/.build/")
+    }
+
     public static func parse(_ data: Data) throws -> TargetGraph {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw Error.notAnObject
@@ -70,7 +76,8 @@ public enum TuistGraphParser {
                     // the folder root additionally claims files added later.
                     sources: paths(in: target["sources"]) + folders.flatMap(\.resolvedFiles),
                     resources: paths(in: (target["resources"] as? [String: Any])?["resources"]),
-                    buildableFolders: folders.map(\.folder)
+                    buildableFolders: folders.map(\.folder),
+                    isExternal: isExternalProject(projectPath)
                 )
             }
         }

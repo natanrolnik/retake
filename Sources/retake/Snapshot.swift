@@ -73,6 +73,9 @@ struct Snapshot: AsyncParsableCommand {
     @Option(name: .long, help: "Tuist binary cache profile for the generated host.")
     var cacheProfile: String?
 
+    @Flag(name: .long, help: "Warm the Tuist cache for the targets about to be rendered.")
+    var warmCache: Bool = false
+
     @Option(name: .long, help: "Path to the retake checkout, if it cannot be inferred.")
     var runtimeSources: String?
 
@@ -108,6 +111,7 @@ struct Snapshot: AsyncParsableCommand {
         }
         if let simulator { arguments += ["--simulator", simulator] }
         if let cacheProfile { arguments += ["--cache-profile", cacheProfile] }
+        if warmCache { arguments += ["--warm-cache"] }
         if let runtimeSources { arguments += ["--runtime-sources", runtimeSources] }
         if settle { arguments += ["--settle"] }
         if !modules.isEmpty { arguments += ["--modules"] + modules }
