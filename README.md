@@ -16,7 +16,9 @@ to maintain, nothing added to your dependency graph.
 ## Requirements
 
 - macOS 14+, Xcode 16+
-- A Tuist project
+- Tuist installed. Your repository does not have to *use* Tuist: retake needs it to
+  generate the throwaway host project, and works from either a Tuist graph or local
+  Swift packages
 - Previews written with the `#Preview` macro. `PreviewProvider` works too, with the
   caveats under [Preview identity](#preview-identity).
 
@@ -69,6 +71,19 @@ retake snapshot --repo . --out ./out                          # everything
 retake snapshot --repo . --modules DesignSystem --out ./out   # one module
 retake snapshot --repo . --files A.swift B.swift --out ./out  # specific files
 ```
+
+### Repositories that do not use Tuist
+
+Point it at local Swift packages instead of a graph. The generated host then stands on
+its own, declaring those packages as dependencies, so a plain Xcode project with packages
+beside it works without changing anything:
+
+```bash
+retake snapshot --repo . --packages Packages/DesignSystem Packages/StatusKit --out ./out
+```
+
+Previews that live in the Xcode app target itself are out of reach this way, since only
+the packages are linked.
 
 `--files` works out which modules own those files, so checking one file builds one module
 rather than the world.

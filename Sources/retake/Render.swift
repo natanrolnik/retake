@@ -80,6 +80,13 @@ struct Render: AsyncParsableCommand {
     var graph: String?
 
     @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: "Local Swift package directories to render, for a repository that does not use Tuist. The generated host links them as dependencies."
+    )
+    var packages: [String] = []
+
+    @Option(
         name: [.customLong("hosts"), .customLong("host")],
         parsing: .upToNextOption,
         help: "App targets allowed to host the previews. Without this every app in scope is used, which is rarely wanted in a repository with per-module preview apps."
@@ -154,7 +161,7 @@ struct Render: AsyncParsableCommand {
             guard runner == nil else {
                 throw ValidationError("--runner applies to --platform macos only; use --graph or --scheme for iOS.")
             }
-            if graph == nil {
+            if graph == nil, packages.isEmpty {
                 guard scheme != nil else {
                     throw ValidationError(
                         "--platform ios needs either --graph <tuist graph json> to generate a host project, "
@@ -171,7 +178,14 @@ struct Render: AsyncParsableCommand {
     func run() async throws {
         switch platform {
         case .macos: try runOnHost()
-        case .ios: graph == nil ? try runInSimulator() : try runWithGeneratedHost()
+        case .ios:
+            if !packages.isEmpty {
+                try renderPackages()
+            } else if graph == nil {
+                try runInSimulator()
+            } else {
+                try runWithGeneratedHost()
+            }
         }
     }
 
@@ -341,6 +355,57 @@ struct Render: AsyncParsableCommand {
         passes will report no changes at all.
 
         """.utf8))
+    }
+
+    /// Renders local Swift packages, with no build graph to consult.
+    ///
+    /// The generated project stands on its own here: the repository may not use Tuist at
+    /// all, so the scratch project brings its own config and declares the packages as
+    /// dependencies rather than linking targets from an existing graph.
+    private func renderPackages() throws {
+        let sources = try RuntimeSources.resolve(
+            retakeRoot: runtimeSources,
+            snapshotPreviewsRoot: snapshotPreviews
+        )
+        let loaded = try packages.map { try SwiftPackage.load(at: $0) }
+        let modules = loaded.flatMap(\.products)
+        print("retake: rendering \(modules.joined(separator: ", ")) from \(loaded.count) package\(loaded.count == 1 ? "" : "s")")
+
+        let outputDirectory = URL(fileURLWithPath: out)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        let scratch = URL(fileURLWithPath: tuistWorkingDirectory ?? FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".retake-host")
+        let hostProject = HostProject(
+            scratchDirectory: scratch,
+            host: .synthesized(linking: []),
+            packages: loaded,
+            sources: sources,
+            deploymentTarget: deploymentTarget
+        )
+        try hostProject.write()
+        defer {
+            if keepHostProject {
+                print("retake: kept generated project at \(hostProject.scratchDirectory.path)")
+            } else {
+                hostProject.remove()
+            }
+        }
+
+        // Its own Tuist root, so dependencies are resolved here rather than inherited.
+        let tuistRunner = Tuist(command: tuist, workingDirectory: scratch)
+        try tuistRunner.run(["install"], at: scratch)
+        var generateArguments = ["generate", "--no-open"]
+        if let cacheProfile { generateArguments += ["--cache-profile", cacheProfile] }
+        try tuistRunner.run(generateArguments, at: scratch)
+
+        try runXcodeBuildTest(
+            scheme: HostProject.schemeName,
+            workspace: scratch.appendingPathComponent("\(HostProject.projectName).xcworkspace").path,
+            project: nil,
+            modules: modules,
+            out: outputDirectory
+        )
     }
 
     /// Renders a host, restarting past any preview that crashes the process.

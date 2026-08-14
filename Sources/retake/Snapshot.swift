@@ -36,6 +36,13 @@ struct Snapshot: AsyncParsableCommand {
     var files: [String] = []
 
     @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: "Local Swift package directories to render, for a repository that does not use Tuist."
+    )
+    var packages: [String] = []
+
+    @Option(
         name: [.customLong("hosts"), .customLong("host")],
         parsing: .upToNextOption,
         help: "App targets allowed to host the previews."
@@ -78,16 +85,8 @@ struct Snapshot: AsyncParsableCommand {
         let snapshots = outputDirectory.appendingPathComponent("snapshots")
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
-        let graphDirectory = outputDirectory.appendingPathComponent("graph")
-        try FileManager.default.createDirectory(at: graphDirectory, withIntermediateDirectories: true)
-        try Tuist(command: tuist, workingDirectory: projectDirectory).run(
-            ["graph", "--format", "json", "--no-open", "--output-path", graphDirectory.path],
-            at: projectDirectory
-        )
-
         var arguments = [
             "--platform", "ios",
-            "--graph", graphDirectory.appendingPathComponent("graph.json").path,
             "--out", snapshots.path,
             "--appearance", appearance.rawValue,
             "--deployment-target", deploymentTarget,
@@ -95,6 +94,18 @@ struct Snapshot: AsyncParsableCommand {
             "--tuist", tuist,
             "--tuist-working-directory", projectDirectory.path,
         ]
+        if packages.isEmpty {
+            // A Tuist repository: read its graph and let host selection work from it.
+            let graphDirectory = outputDirectory.appendingPathComponent("graph")
+            try FileManager.default.createDirectory(at: graphDirectory, withIntermediateDirectories: true)
+            try Tuist(command: tuist, workingDirectory: projectDirectory).run(
+                ["graph", "--format", "json", "--no-open", "--output-path", graphDirectory.path],
+                at: projectDirectory
+            )
+            arguments += ["--graph", graphDirectory.appendingPathComponent("graph.json").path]
+        } else {
+            arguments += ["--packages"] + packages.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+        }
         if let simulator { arguments += ["--simulator", simulator] }
         if let cacheProfile { arguments += ["--cache-profile", cacheProfile] }
         if let runtimeSources { arguments += ["--runtime-sources", runtimeSources] }
