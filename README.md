@@ -1,44 +1,269 @@
 # retake
 
-Renders the SwiftUI `#Preview`s in a repo to PNGs so a pull request can show what its UI
-changes actually look like.
+Renders the SwiftUI `#Preview`s in a repository to PNGs, so you can see what a change
+actually looks like instead of imagining it from a diff.
 
-A preview is treated as affected **iff its rendering changed**. retake renders on the
-merge base and on the head and compares the images, rather than guessing which previews a
-diff touches from file ownership. That is the only way to catch previews in *downstream*
-modules: change a button in a design-system module and every screen that consumes it
+A preview is treated as affected **iff its rendering changed**. retake renders the merge
+base and the head and compares the images, rather than guessing which previews a diff
+touches from file ownership. That is the only way to catch previews in *downstream*
+modules: change a button in a design system module and every screen that consumes it
 changes too, without any of those files appearing in the diff.
 
-**iOS needs no changes to your repository.** retake generates its own throwaway Tuist
-project to host the previews, renders through it, and deletes it, so there is no snapshot
-target to maintain and nothing added to your dependency graph. macOS still needs a small
-runner target, described below.
+**Nothing is added to the repository under review.** On iOS, retake generates a throwaway
+Tuist project to host the previews, renders through it, and deletes it. No snapshot target
+to maintain, nothing added to your dependency graph.
 
 ## Requirements
 
 - macOS 14+, Xcode 16+
 - A Tuist project
+- Previews written with the `#Preview` macro. `PreviewProvider` works too, with the
+  caveats under [Preview identity](#preview-identity).
 
-## macOS
-
-macOS renders on the host: no simulator, no XCTest. retake does not yet generate the
-host project for macOS the way it does for iOS, so this is the one case where a
-repository adds a target of its own. `Fixtures/SampleMac` is a complete working example.
+## Install
 
 ```bash
-xcodebuild -workspace SampleMac.xcworkspace -scheme PreviewRunner \
-  -destination 'platform=macOS' -derivedDataPath .derived build
-retake render --platform macos \
-  --runner .derived/Build/Products/Debug/PreviewRunner.app/Contents/MacOS/PreviewRunner \
-  --out ./snapshots
+mise use -g github:natanrolnik/retake@0.2.0
 ```
+
+Or build it:
+
+```bash
+git clone https://github.com/natanrolnik/retake && cd retake
+swift build -c release --product retake
+```
+
+The release tarball carries more than the binary: retake compiles its runtime, and
+SnapshotPreviews, into the project it generates, so those sources ship beside the
+executable and are found relative to it.
+
+## Quick start
+
+See what a file draws:
+
+```bash
+retake snapshot --repo . --files Sources/DesignSystem/Button.swift --out ./out
+open ./out/report.html
+```
+
+See what a change did:
+
+```bash
+retake review --repo . --base main --out ./out
+open ./out/report.html
+```
+
+Neither needs a simulator named, a module list, or a scheme.
+
+---
+
+## Commands
+
+### `snapshot` — what is there
+
+Renders the current state and writes a catalogue: one image per preview, grouped by
+module. No comparison, no base commit.
+
+```bash
+retake snapshot --repo . --out ./out                          # everything
+retake snapshot --repo . --modules DesignSystem --out ./out   # one module
+retake snapshot --repo . --files A.swift B.swift --out ./out  # specific files
+```
+
+`--files` works out which modules own those files, so checking one file builds one module
+rather than the world.
+
+### `review` — what changed
+
+The whole loop in one command: render the merge base from a detached git worktree, render
+the working tree, diff, and write the report.
+
+```bash
+retake review --repo . --base main --out ./out
+```
+
+The base comes from a worktree so your checkout keeps its uncommitted work — reviewing
+changes you have not committed yet is the point of running it locally.
+
+Useful flags: `--modules`, `--hosts`, `--settle`, `--verify`, `--tolerance`,
+`--reuse-base`, `--ignore`.
+
+### `verify` — is rendering trustworthy here
+
+Renders the same commit several times and reports previews whose pixels move. Exits
+non-zero when any do, so CI can gate on it.
+
+```bash
+retake verify --graph graph.json --modules Toss --runs 3 --out ./verify
+```
+
+Worth running once per module before trusting a report. A view whose content arrives
+asynchronously renders two different pictures on the same commit and then shows up as a
+change nobody made. `--settle` fixes most of those, at about two seconds per preview.
+
+### The individual stages
+
+`review` is these, in order. Use them directly when you need to interleave the passes,
+such as caching the base render in CI.
+
+| Command | Does |
+| --- | --- |
+| `scope` | Maps changed files to the modules whose previews could be affected |
+| `render` | Renders previews to PNGs plus `manifest.json` |
+| `diff` | Joins two render passes into added / removed / changed / unchanged |
+| `report` | Renders a diff report as one self-contained HTML file |
+| `publish` | Uploads the images to S3 and records their URLs |
+| `comment` | Renders the report as Markdown, and upserts a pull request comment |
+| `simulator` | Prints the simulator retake would use |
+
+---
+
+## For agents
+
+`snapshot --files` is the tight loop: edit a view, render exactly its previews, look at
+the result. It needs no scheme, no simulator and no base revision, and builds only the
+module that owns the file.
+
+```bash
+retake snapshot --repo . --files Sources/Feature/CheckoutScreen.swift --out /tmp/out
+```
+
+Everything is machine readable:
+
+- `/tmp/out/snapshots/manifest.json` — one entry per preview: id, module, source file,
+  line, display name, PNG path, sha256, dimensions
+- `/tmp/out/report.json` — the same in report form
+- `/tmp/out/snapshots/*.png` — the images, named after the preview
+
+```jsonc
+{
+  "previewID": "Feature/CheckoutScreen.swift#Checkout",
+  "module": "Feature",
+  "sourceFile": "Feature/CheckoutScreen.swift",
+  "line": 28,
+  "pngPath": "Feature-CheckoutScreen.swift-Checkout.png",
+  "sha256": "0222f6b1…",
+  "width": 402, "height": 874
+}
+```
+
+Three things worth knowing before trusting the output:
+
+- **Previews that fail to render are listed under `failures`**, never dropped, so a broken
+  preview cannot be mistaken for a missing one.
+- **If every preview renders to an identical image, retake says so loudly.** That means
+  nothing actually drew, and a diff of two such passes would report no changes at all.
+- **A preview that crashes the process costs one preview, not the run.** retake records
+  what was in flight, restarts past it, and names it in `failures`.
+
+---
+
+## GitHub Actions
+
+The simplest useful setup: render, upload the report as an artifact, and comment.
+
+```yaml
+name: Preview Snapshots
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: preview-snapshots-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  snapshots:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the merge base has to be reachable
+
+      - uses: jdx/mise-action@v2  # retake requires Tuist, and does not install it
+      - run: tuist install
+
+      - uses: natanrolnik/retake@0.2.0
+        with:
+          hosts: MyApp
+```
+
+That produces a `retake-report` artifact and a sticky pull request comment linking to it.
+
+### Showing the images in the comment
+
+A workflow artifact is a zip behind an authenticated endpoint, so nothing inside it can be
+an image source in a comment. Inline images need a bucket.
+
+```yaml
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write             # to mint the OIDC token
+
+    steps:
+      # …checkout, mise, tuist install…
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          role-to-assume: arn:aws:iam::<account>:role/retake-ci
+          aws-region: us-east-1
+
+      - uses: natanrolnik/retake@0.2.0
+        with:
+          hosts: MyApp
+          s3-bucket: my-preview-snapshots
+          s3-region: us-east-1
+          s3-url-mode: presigned  # public | cdn | presigned
+          s3-presign-expires: '86400'
+```
+
+`s3-url-mode` is a decision about who can see unreleased UI:
+
+| Mode | Bucket | Trade-off |
+| --- | --- | --- |
+| `public` | World readable | Simplest; anyone with the URL sees the images |
+| `cdn` | Behind `s3-public-base-url` | A custom domain or CDN in front |
+| `presigned` | Fully private | URLs expire, capped at 7 days by SigV4 |
+
+Set a **lifecycle rule** expiring the prefix. Every push writes a fresh timestamped
+prefix, so the bucket grows forever without one.
+
+Pull requests from forks get no OIDC token and no secrets, so publishing and commenting
+are skipped there. The artifact and the job summary are still produced.
+
+### Inputs worth setting
+
+| Input | Why |
+| --- | --- |
+| `hosts` | Which app targets may host previews. Without it every app in scope becomes its own render pass, which matters if you have per-module preview apps |
+| `settle` | Waits for asynchronously loaded content. Needed for RealityKit scenes, `.task` loads, decoded images |
+| `verify` | Renders head twice and excludes previews that do not reproduce. A third more macOS minutes |
+| `ignore` | Globs for files that cannot affect rendering. Defaults cover `.github`, markdown and docs; without them a single unowned file widens the scope to everything |
+| `cache-profile` | Tuist binary cache profile, so dependencies come from prebuilt binaries |
+| `simulator` | Pins the device. Omitted, retake picks the runner's newest available iPhone and prints it |
+
+### What it costs
+
+The dominant cost is the simulator: booting one on a cold runner takes minutes, and the
+job renders twice. Two levers matter, and the action applies both.
+
+- The **base render is cached on the merge base**, so a typical push renders only head.
+- The **binary is installed, not built**, and cached by mise.
+
+---
 
 ## How rendering works
 
 Preview metadata only exists at runtime, inside a process that links your modules, so
-something has to host them. On iOS retake writes a throwaway Tuist project into a
-scratch directory, links your existing targets by path, renders through an XCTest bundle
-in the simulator, and deletes the directory. Your manifests are never touched.
+something has to host them. retake writes a throwaway Tuist project into a scratch
+directory, links your existing targets by path, renders through an XCTest bundle in the
+simulator, and deletes the directory.
 
 Which host it picks follows what previews need to be reachable:
 
@@ -46,134 +271,51 @@ Which host it picks follows what previews need to be reachable:
 - frameworks only, and it synthesises an empty app linking just those frameworks, so a
   leaf change never builds the whole app.
 
-```bash
-retake review --repo . --base main --out ./out --simulator "iPhone 17"
-```
+Modules are partitioned across hosts, so a module shared by several apps renders exactly
+once, in the first of them by name. That assignment is stable between the base and head
+passes; an unstable one would make every preview in a moved module look changed.
 
-That is the whole loop: render the merge base in a git worktree, render the working tree,
-diff, and write the report. Individual stages are available as `scope`, `render`, `diff`,
-`report`, `publish`, `comment` and `verify`.
+### macOS
 
-Output is a directory of PNGs plus `manifest.json`, one entry per preview:
-
-```json
-{
-  "previewID": "Feature/CheckoutScreen.swift#Checkout",
-  "module": "Feature",
-  "sourceFile": "Feature/CheckoutScreen.swift",
-  "line": 28,
-  "displayName": "Checkout",
-  "pngPath": "Feature-CheckoutScreen.swift-Checkout.png",
-  "sha256": "0222f6b1…",
-  "width": 147,
-  "height": 125
-}
-```
-
-Useful options:
-
-| Option | Meaning |
-| --- | --- |
-| `--appearance light\|dark` | Forced, never inherited from the host |
-| `--modules A B C` | Render only these modules |
-| `--timeout <seconds>` | Kill the runner if it hangs |
-| `--settle` | Wait for asynchronously loaded content before capturing |
-| `--simulator "iPhone 17,26.0"` | Pinned device. Omitted, retake picks the newest available iPhone, preferring one already booted, and prints which |
-| `--files a.swift b.swift` | Only the previews declared in those files |
-| `--out <dir>` | Where PNGs and `manifest.json` go |
-
-Previews that fail to render are recorded in `manifest.json` under `failures` rather than
-being dropped, so a render failure can never be mistaken for a deleted preview later.
-
-## Snapshotting the current state
+macOS renders on the host: no simulator, no XCTest. retake does not generate the host
+project for macOS yet, so this is the one case where a repository adds a target of its
+own. `Fixtures/SampleMac` is a complete working example.
 
 ```bash
-retake snapshot --repo . --out ./out
-
-# Only what one file draws, which is the fastest loop there is
-retake snapshot --repo . --files Sources/DesignSystem/Button.swift --out ./out
+retake render --platform macos \
+  --runner .derived/Build/Products/Debug/PreviewRunner.app/Contents/MacOS/PreviewRunner \
+  --out ./snapshots
 ```
 
-No comparison, no base commit: renders what is there now and writes a catalogue, one
-image per preview grouped by module. `--files` narrows to the previews declared in those
-files and, on its own, works out which modules to build, so a one file check builds one
-module.
-
-`PreviewProvider` previews report no file, so they cannot be matched by `--files`; retake
-says how many it left out rather than silently rendering nothing.
-
-## Diffing
-
-```bash
-retake diff --base ./snapshots-base --head ./snapshots-head --out ./report
-```
-
-Every preview lands in exactly one of four buckets:
-
-| Bucket | Meaning | In the comment |
-| --- | --- | --- |
-| `added` | Head only. There is no "before". | One image, labelled *New preview* |
-| `removed` | Base only. Catches accidental deletions. | The base image |
-| `changed` | Both sides, pixels differ | Before, After, Diff |
-| `unchanged` | Identical, or below the tolerance | Excluded |
-
-Entries with matching SHA-256 settle without any per-pixel work; only the rest are
-compared pixel by pixel. Changed previews get a third *diff* image, magenta over a washed
-out copy of the head render, plus a changed-pixel percentage.
-
-Two knobs absorb renderer nondeterminism:
-
-- `--pixel-threshold <0-255>` — per-channel delta below which two pixels count as equal.
-- `--tolerance <percent>` — changed-pixel percentage at or below which a preview is filed
-  as unchanged.
-
-Anything the tolerance suppresses is printed and flagged in `report.json` with
-`suppressedByTolerance`, so threshold truncation is never silent. A preview whose
-dimensions changed is never suppressed, however few pixels differ.
-
-Previews that failed to render are reported in their own bucket rather than appearing as
-removals.
-
-## HTML report
-
-```bash
-retake diff --base ./base --head ./head --out ./report --html report.html
-# or, from an existing report.json
-retake report --report ./report/report.json --out report.html
-```
-
-One self-contained file: images are inlined as data URIs, so it works as a CI artifact, an
-email attachment, or a local `open`, with no sibling PNG directory and no server. It groups
-previews by module, shows Before / After / Diff side by side, renders new previews as a
-single image, and follows the reader's light or dark mode.
-
-`--no-inline-images` links to the PNGs on disk instead, for when file size matters more
-than portability. `--include-unchanged` adds the previews that did not move.
+---
 
 ## Preview identity
 
-Comparing two renders needs an ID that survives unrelated edits. The runtime offers two
+Comparing two renders needs an id that survives unrelated edits. The runtime reports two
 kinds of preview, and they need different treatment:
 
-- **`#Preview` macro** — reported with a `#fileID` and a line number. The ID is
+- **`#Preview` macro** — reported with a `#fileID` and a line number. The id is
   `Module/File.swift#DisplayName`. Unnamed previews, and names repeated inside one file,
   fall back to an ordinal in source order (`#@0`).
-- **`PreviewProvider`** — no file info, so the ID is the declared type name plus the index
-  in `_allPreviews`, e.g. `Feature.Screen_Previews#0`.
+- **`PreviewProvider`** — no file information, so the id is the declared type name plus
+  the index in `_allPreviews`, e.g. `Feature.Screen_Previews#0`.
 
 The mangled runtime type name is deliberately **not** used. For macro previews it encodes
-the source line, so adding a line above a preview would make it read as a removal plus an
+the source line, so adding a line above a preview would read as a removal plus an
 addition.
+
+Two consequences for `PreviewProvider`: it cannot be filtered with `--files`, and it is
+not anchored to a file.
 
 ### Known limitation: same-basename files
 
 `#fileID` carries only a basename, so two files named `Widget.swift` in one module are
 indistinguishable at runtime and share one ordinal space. Named previews are unaffected;
 unnamed ones in those files can shift identity when the other file changes. SPM rejects
-duplicate basenames outright, but Xcode and Tuist targets allow them.
+duplicate basenames, but Xcode and Tuist targets allow them. retake detects this from the
+build graph and warns.
 
-This is undetectable from inside the runner. `SourceBasenameCollision` finds it from the
-build graph's source list instead, and will be wired into `retake scope`.
+---
 
 ## Determinism
 
@@ -181,27 +323,15 @@ The pixel diff is worthless if rendering is noisy, so the renderer pins what it 
 appearance is forced rather than inherited, and the runner has no Dock icon or menu bar to
 steal focus.
 
-That is not enough on its own. A view whose content arrives asynchronously — a RealityKit
-scene, a `.task` load — renders two different pictures on the same commit, and then shows
-up as a change nobody made. Measure it rather than assume it:
+That is not enough on its own, and the failure is quiet: a view whose content arrives
+asynchronously renders two different pictures on the same commit. Measure it rather than
+assume it — `retake verify` exists for exactly this, and `--settle` fixes most cases.
 
-```bash
-retake verify --graph graph.json --modules Toss --runs 3 --out ./verify
-```
+Two knobs absorb what is left: `--pixel-threshold` for per-channel jitter, and
+`--tolerance` for the changed-pixel percentage. Anything either suppresses is printed and
+flagged in `report.json`, so threshold truncation is never silent.
 
-It exits non-zero when a preview is not reproducible, so CI can gate on it. `--settle`
-fixes most cases by waiting for that content to arrive, at about two seconds per preview.
-`retake diff --verify <second render of head>` files anything still unstable in its own
-bucket instead of reporting it as a change.
-
-## Continuous integration
-
-`action.yml` is a composite action. The report is uploaded as an artifact and repeated in
-the job summary; with `s3-bucket` set, images are uploaded and the comment shows them
-inline. `s3-url-mode` chooses between `public`, `cdn` and `presigned`.
-
-See `.github/workflows/preview-snapshots.yml` for a working example, including assuming an
-AWS role by OIDC rather than storing a key.
+---
 
 ## Development
 
@@ -209,12 +339,6 @@ AWS role by OIDC rather than storing a key.
 swift build
 swift test
 
-# iOS fixture, end to end, without touching the fixture
-cd Fixtures/SampleApp && tuist graph --format json --no-open --output-path /tmp/fx && cd ../..
-swift run retake render --platform ios --graph /tmp/fx/graph.json \
-  --simulator "iPhone 17" --out /tmp/snapshots
+# The iOS fixture, end to end, without touching the fixture
+swift run retake snapshot --repo Fixtures/SampleApp --out /tmp/out
 ```
-
-The SnapshotPreviews dependency is pinned to a `main` revision rather than a tag: the
-newest release (v0.9.4, August 2024) predates the runtime module filtering that scoping
-needs.
