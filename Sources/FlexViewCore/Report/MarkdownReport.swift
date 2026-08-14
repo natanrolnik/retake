@@ -48,15 +48,34 @@ public enum MarkdownReport {
         for (module, previews) in Dictionary(grouping: interesting, by: \.module).sorted(by: { $0.key < $1.key }) {
             lines.append("<details><summary><b>\(escape(module))</b> — \(previews.count) preview\(previews.count == 1 ? "" : "s")</summary>")
             lines.append("")
-            lines.append("| Preview | Change | Pixels |")
-            lines.append("| --- | --- | --- |")
-
             let sorted = previews.sorted { $0.previewID < $1.previewID }
-            for preview in sorted.prefix(options.previewLimit) {
-                let name = preview.displayName ?? preview.previewID.rawValue
-                let pixels = preview.changedPixelPercentage
-                    .map { String(format: "%.2f%%", $0) } ?? "—"
-                lines.append("| `\(escape(name))` | \(label(for: preview.change)) | \(preview.change == .changed ? pixels : "—") |")
+            // With published images the table shows the change; without them it can only
+            // name it, and the reader has to open the report.
+            let hasImages = sorted.contains { $0.baseURL != nil || $0.headURL != nil }
+
+            if hasImages {
+                lines.append("| Preview | Before | After | Diff |")
+                lines.append("| --- | --- | --- | --- |")
+                for preview in sorted.prefix(options.previewLimit) {
+                    let name = preview.displayName ?? preview.previewID.rawValue
+                    let detail = preview.changedPixelPercentage
+                        .map { String(format: " (%.2f%%)", $0) } ?? ""
+                    lines.append(
+                        "| **\(escape(name))**<br>\(label(for: preview.change))\(escape(detail)) "
+                            + "| \(image(preview.baseURL, alt: "before")) "
+                            + "| \(image(preview.headURL, alt: "after")) "
+                            + "| \(image(preview.diffURL, alt: "diff")) |"
+                    )
+                }
+            } else {
+                lines.append("| Preview | Change | Pixels |")
+                lines.append("| --- | --- | --- |")
+                for preview in sorted.prefix(options.previewLimit) {
+                    let name = preview.displayName ?? preview.previewID.rawValue
+                    let pixels = preview.changedPixelPercentage
+                        .map { String(format: "%.2f%%", $0) } ?? "—"
+                    lines.append("| `\(escape(name))` | \(label(for: preview.change)) | \(preview.change == .changed ? pixels : "—") |")
+                }
             }
             if sorted.count > options.previewLimit {
                 lines.append("")
@@ -93,8 +112,10 @@ public enum MarkdownReport {
             lines.append("")
         }
 
-        // The pictures are the point, and this comment does not have them.
-        if let artifactURL = options.artifactURL {
+        if let reportURL = report.reportURL {
+            lines.append("[**Open the full report**](\(reportURL))")
+            lines.append("")
+        } else if let artifactURL = options.artifactURL {
             lines.append("[**See the images**](\(artifactURL)) — download the `\(options.artifactName)` artifact and open `report.html`.")
         } else {
             lines.append("_Download the `\(options.artifactName)` artifact and open `report.html` to see the images._")
@@ -102,6 +123,12 @@ public enum MarkdownReport {
         lines.append("")
 
         return lines.joined(separator: "\n")
+    }
+
+    /// Width-constrained so a table of previews stays readable in a comment.
+    private static func image(_ url: String?, alt: String) -> String {
+        guard let url else { return "—" }
+        return #"<img src="\#(url)" alt="\#(alt)" width="220">"#
     }
 
     private static func label(for change: PreviewChange) -> String {

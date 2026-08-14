@@ -34,6 +34,12 @@ public struct PreviewDiff: Codable, Sendable, Equatable {
     /// Path of the generated delta image, relative to the report's output directory.
     public var diffPNG: String?
 
+    /// Public URLs, once the images have been published. Without these a comment can
+    /// only link to a downloadable report.
+    public var baseURL: String?
+    public var headURL: String?
+    public var diffURL: String?
+
     public var changedPixelPercentage: Double?
     /// True when the images differ but by less than `--tolerance`, so the preview was
     /// filed as unchanged. Recorded so threshold suppression is never silent.
@@ -78,6 +84,8 @@ public struct DiffReport: Codable, Sendable {
     /// own to locate every image.
     public var baseDirectory: String?
     public var headDirectory: String?
+    /// Public URL of the published HTML report, when there is one.
+    public var reportURL: String?
     public var previews: [PreviewDiff]
     /// Previews that failed to render on either side. Surfaced separately so a broken
     /// preview is never reported as removed.
@@ -88,6 +96,7 @@ public struct DiffReport: Codable, Sendable {
         tolerance: Double,
         baseDirectory: String? = nil,
         headDirectory: String? = nil,
+        reportURL: String? = nil,
         previews: [PreviewDiff],
         failures: [ManifestFailure] = []
     ) {
@@ -95,6 +104,7 @@ public struct DiffReport: Codable, Sendable {
         self.tolerance = tolerance
         self.baseDirectory = baseDirectory
         self.headDirectory = headDirectory
+        self.reportURL = reportURL
         self.previews = previews.sorted { $0.previewID < $1.previewID }
         self.failures = failures.sorted { $0.previewID < $1.previewID }
     }

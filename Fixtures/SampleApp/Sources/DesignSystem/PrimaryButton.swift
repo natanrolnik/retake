@@ -20,7 +20,7 @@ public struct PrimaryButton: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            .background(Color.blue, in: RoundedRectangle(cornerRadius: 8))
+            .background(Color.indigo, in: RoundedRectangle(cornerRadius: 14))
     }
 }
 

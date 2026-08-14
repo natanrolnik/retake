@@ -39,6 +39,34 @@ inputs:
     description: Name of the uploaded artifact.
     required: false
     default: 'flexview-report'
+  s3-bucket:
+    description: Bucket to upload images to. Without it the report is artifact-only and the comment links to it instead of showing images.
+    required: false
+    default: ''
+  s3-region:
+    description: Region of the bucket.
+    required: false
+    default: 'us-east-1'
+  s3-prefix:
+    description: Key prefix for everything flexview uploads.
+    required: false
+    default: 'flexview'
+  s3-url-mode:
+    description: How uploaded objects are addressed. public = world readable bucket URL; cdn = served through s3-public-base-url; presigned = bucket stays private and each URL carries a time-limited signature.
+    required: false
+    default: 'public'
+  s3-presign-expires:
+    description: Lifetime of presigned URLs in seconds, with s3-url-mode presigned. AWS caps this at 7 days, after which images in older comments stop loading.
+    required: false
+    default: '86400'
+  s3-endpoint:
+    description: Endpoint for an S3-compatible service. Omit for AWS.
+    required: false
+    default: ''
+  s3-public-base-url:
+    description: Base URL objects are served from with s3-url-mode cdn (a CDN or custom domain in front of the bucket).
+    required: false
+    default: ''
   comment:
     description: Upsert a pull request comment. Skipped automatically when the token cannot write.
     required: false
@@ -59,6 +87,18 @@ outputs:
 runs:
   using: composite
   steps:
+    # Booting a simulator on a cold runner takes minutes, and it is the single largest
+    # cost in this job. Started first so it happens while flexview and the project are
+    # still building, rather than in silence after them.
+    - name: Warm the simulator
+      shell: bash
+      run: |
+        DEVICE="${{ inputs.simulator }}"
+        DEVICE="${DEVICE%%,*}"
+        [ -z "$DEVICE" ] && DEVICE="iPhone 17"
+        echo "Booting $DEVICE in the background"
+        xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
+
     - name: Check out flexview
       uses: actions/checkout@v4
       with:
@@ -71,8 +111,11 @@ runs:
       shell: bash
       run: |
         echo "sha=$(git -C .flexview-tool rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-        # The binary is toolchain specific, so a Swift upgrade must miss the cache.
-        echo "swift=$(swiftc --version | head -1 | tr -cd '[:alnum:].' )" >> "$GITHUB_OUTPUT"
+        # The binary is toolchain specific, so a Swift upgrade must miss the cache. Keyed
+        # on the selected Xcode rather than `swiftc --version`: the first invocation of a
+        # Swift tool on a fresh runner triggers Xcode's first-launch setup, which took
+        # minutes and is pure latency this early in the job. The path carries the version.
+        echo "swift=$(xcode-select -p | tr -cd '[:alnum:].')" >> "$GITHUB_OUTPUT"
 
     # The binary is the thing worth caching: on a hit nothing is compiled at all. Keyed
     # on the exact flexview revision, so a new revision rebuilds and an unchanged one
@@ -81,7 +124,7 @@ runs:
       id: binary-cache
       uses: actions/cache@v4
       with:
-        path: .flexview-tool/.build/release/flexview
+        path: .flexview-tool/.build/debug/flexview
         key: flexview-bin-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ steps.tool.outputs.sha }}
 
     # Only consulted when the binary is missing, to make that rebuild incremental rather
@@ -100,13 +143,38 @@ runs:
       if: steps.binary-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: .flexview-tool
-      run: swift build -c release --product flexview
+      # Debug, not release: flexview only orchestrates xcodebuild and is I/O bound, so
+      # optimisation buys nothing, while release mode recompiles a whole module for any
+      # changed file and defeats the incremental restore below.
+      run: swift build --product flexview
 
-    - name: Install Tuist
+    # Deliberately not installed here. The repository pins its own Tuist version, and a
+    # different one can produce a graph that disagrees with the project, so the caller
+    # installs it the same way it does for every other job.
+    - name: Resolve Tuist
+      id: tuist
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         if ! command -v tuist >/dev/null 2>&1; then
-          curl -Ls https://install.tuist.io | bash
+          echo "::error::tuist is not on PATH. Install it before this step, for example with jdx/mise-action or tuist/setup-tuist, using the version this repository pins."
+          exit 1
+        fi
+        # Prefer running through mise where it manages tuist, so the pinned version is
+        # the one used.
+        if command -v mise >/dev/null 2>&1 && mise which tuist >/dev/null 2>&1; then
+          echo "command=mise exec -- tuist" >> "$GITHUB_OUTPUT"
+        else
+          echo "command=tuist" >> "$GITHUB_OUTPUT"
+        fi
+        tuist version
+
+    # Not a requirement: flexview falls back to a raw xcodebuild log without it.
+    - name: Install xcbeautify
+      shell: bash
+      run: |
+        if ! command -v xcbeautify >/dev/null 2>&1; then
+          brew install xcbeautify || echo "::warning::xcbeautify unavailable; the build log will be verbose."
         fi
 
     # The base is the expensive half and rarely changes within a pull request, so it is
@@ -136,6 +204,7 @@ runs:
           --deployment-target "${{ inputs.deployment-target }}"
           --runtime-sources "$TOOL"
           --html "$OUT/report.html"
+          --tuist "${{ steps.tuist.outputs.command }}"
         )
         [ -n "${{ inputs.simulator }}" ] && ARGS+=(--simulator "${{ inputs.simulator }}")
         [ -n "${{ inputs.modules }}" ] && ARGS+=(--modules ${{ inputs.modules }})
@@ -143,10 +212,32 @@ runs:
         [ "${{ inputs.verify }}" = "true" ] && ARGS+=(--verify)
         [ "${{ steps.base-cache.outputs.cache-hit }}" = "true" ] && ARGS+=(--reuse-base)
 
-        "$TOOL/.build/release/flexview" "${ARGS[@]}"
+        "$TOOL/.build/debug/flexview" "${ARGS[@]}"
 
         echo "report=$OUT/report.html" >> "$GITHUB_OUTPUT"
-        "$TOOL/.build/release/flexview" comment \
+
+        # Images have to live somewhere with a public URL for a comment to show them:
+        # a workflow artifact is a zip behind auth and cannot be linked to.
+        if [ -n "${{ inputs.s3-bucket }}" ]; then
+          PUBLISH=(
+            publish
+            --report "$OUT/diff/report.json"
+            --bucket "${{ inputs.s3-bucket }}"
+            --region "${{ inputs.s3-region }}"
+            --prefix "${{ inputs.s3-prefix }}"
+            --repository "$GITHUB_REPOSITORY"
+            --commit "${{ github.event.pull_request.head.sha }}"
+            --html "$OUT/report.html"
+            --url-mode "${{ inputs.s3-url-mode }}"
+            --presign-expires "${{ inputs.s3-presign-expires }}"
+          )
+          [ -n "${{ github.event.pull_request.number }}" ] && PUBLISH+=(--pr "${{ github.event.pull_request.number }}")
+          [ -n "${{ inputs.s3-endpoint }}" ] && PUBLISH+=(--endpoint "${{ inputs.s3-endpoint }}")
+          [ -n "${{ inputs.s3-public-base-url }}" ] && PUBLISH+=(--public-base-url "${{ inputs.s3-public-base-url }}")
+          "$TOOL/.build/debug/flexview" "${PUBLISH[@]}"
+        fi
+
+        "$TOOL/.build/debug/flexview" comment \
           --report "$OUT/diff/report.json" \
           --artifact-name "${{ inputs.artifact-name }}" \
           --artifact-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -176,7 +267,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
       run: |
-        "$GITHUB_WORKSPACE/.flexview-tool/.build/release/flexview" comment \
+        "$GITHUB_WORKSPACE/.flexview-tool/.build/debug/flexview" comment \
           --report "${{ runner.temp }}/flexview/diff/report.json" \
           --pr "${{ github.event.pull_request.number }}" \
           --artifact-name "${{ inputs.artifact-name }}" \

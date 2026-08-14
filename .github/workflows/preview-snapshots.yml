@@ -27,8 +27,19 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      # The action requires Tuist rather than installing it, so that the version stays
+      # the one this repository pins.
+      - uses: jdx/mise-action@v2
+
       - uses: ./
+        env:
+          # Scoped to PutObject/GetObject on this bucket's flexview/* prefix only.
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         with:
+          # Build the tool from this pull request rather than from main, so a change to
+          # flexview is exercised by its own fixture before it is released.
+          flexview-ref: ${{ github.event.pull_request.head.sha }}
           working-directory: Fixtures/SampleApp
           simulator: iPhone 17
           deployment-target: '17.0'
@@ -36,3 +47,9 @@ jobs:
           # modules whose previews load content asynchronously, which
           # `flexview verify` will tell you.
           settle: 'false'
+          # The bucket blocks all public access; each URL carries its own signature and
+          # lasts a day, so images in an older comment eventually stop loading.
+          s3-bucket: flexview-preview-snapshots
+          s3-region: us-east-1
+          s3-url-mode: presigned
+          s3-presign-expires: '86400'

@@ -87,6 +87,22 @@ struct Render: AsyncParsableCommand {
     )
     var settle: Bool = false
 
+    @Option(name: .long, help: "Tuist executable. Pass an absolute path to bypass a version manager shim.")
+    var tuist: String = "tuist"
+
+    @Option(
+        name: .long,
+        help: "Directory to launch Tuist from. Defaults to the project being rendered; set it when that project is a worktree with no version manager config."
+    )
+    var tuistWorkingDirectory: String?
+
+    @Flag(
+        name: .long,
+        inversion: .prefixedNo,
+        help: "Pipe xcodebuild through xcbeautify when it is available. A full build log buries the few lines worth reading."
+    )
+    var pretty: Bool = true
+
     func validate() throws {
         if workspace != nil, project != nil {
             throw ValidationError("--workspace and --project are mutually exclusive.")
@@ -214,12 +230,12 @@ struct Render: AsyncParsableCommand {
         }
 
         print("flexview: generating host project in \(hostProject.scratchDirectory.lastPathComponent)")
-        _ = try Shell.runChecked(
-            "/usr/bin/env",
-            ["tuist", "generate", "--no-open"],
-            currentDirectory: hostProject.scratchDirectory,
-            streamOutput: false
-        )
+        // Launched from the Tuist root rather than the scratch directory, and from the
+        // caller's directory when given: inside a worktree a version manager shim has
+        // no config to resolve a version from.
+        let launchDirectory = tuistWorkingDirectory.map { URL(fileURLWithPath: $0) } ?? root
+        try Tuist(command: tuist, workingDirectory: launchDirectory)
+            .run(["generate", "--no-open"], at: hostProject.scratchDirectory)
 
         try runXcodeBuildTest(
             scheme: HostProject.schemeName,
@@ -266,9 +282,10 @@ struct Render: AsyncParsableCommand {
         }
 
         print("flexview: running \(scheme) on \(simulator ?? "the default simulator")")
+        let command = XcodeBuild.command(arguments: arguments + ["test"], pretty: pretty)
         let result = try Shell.run(
-            "/usr/bin/xcodebuild",
-            arguments + ["test"],
+            command.executable,
+            command.arguments,
             environment: environment,
             streamOutput: true,
             timeout: TimeInterval(timeout)

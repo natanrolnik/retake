@@ -70,7 +70,7 @@ struct Verify: AsyncParsableCommand {
             if settle { arguments += ["--settle"] }
             if !modules.isEmpty { arguments += ["--modules"] + modules }
 
-            var render = try Render.parse(arguments)
+            let render = try Render.parse(arguments)
             try await render.run()
 
             for entry in try Manifest.read(from: runDirectory).entries {

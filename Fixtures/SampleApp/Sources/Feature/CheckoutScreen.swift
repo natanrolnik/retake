@@ -28,3 +28,8 @@ public struct CheckoutScreen: View {
 #Preview("Checkout") {
     CheckoutScreen()
 }
+
+#Preview("Checkout, compact") {
+    CheckoutScreen()
+        .frame(width: 200)
+}
