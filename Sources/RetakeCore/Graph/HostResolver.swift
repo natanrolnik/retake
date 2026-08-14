@@ -68,12 +68,15 @@ public enum HostResolver {
     public static func resolve(
         graph: TargetGraph,
         modules: [String],
-        candidateHosts: [String] = []
+        candidateHosts: [String] = [],
+        platform: RenderPlatform = .ios
     ) throws -> [HostAssignment] {
         let inScope = modules.isEmpty
-            ? graph.renderableTargets
+            ? graph.renderableTargets(for: platform)
             : graph.targets.values.filter { modules.contains($0.productName) }
-        let renderable = inScope.filter { !graph.isTestBundle($0.id) && !$0.isExternal }
+        let renderable = inScope.filter {
+            !graph.isTestBundle($0.id) && !$0.isExternal && $0.supports(platform)
+        }
         guard !renderable.isEmpty else { throw Error.noTargetsInScope }
 
         let apps: [TargetGraph.Target]

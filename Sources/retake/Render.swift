@@ -296,7 +296,8 @@ struct Render: AsyncParsableCommand {
         let selection = try HostSelector.select(
             graph: targetGraph,
             modules: modules.isEmpty ? modulesForFiles() : modules,
-            candidateHosts: hosts
+            candidateHosts: hosts,
+            platform: platform
         )
         print("retake: \(selection.explanation)")
 

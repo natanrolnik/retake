@@ -77,7 +77,8 @@ public enum TuistGraphParser {
                     sources: paths(in: target["sources"]) + folders.flatMap(\.resolvedFiles),
                     resources: paths(in: (target["resources"] as? [String: Any])?["resources"]),
                     buildableFolders: folders.map(\.folder),
-                    isExternal: isExternalProject(projectPath)
+                    isExternal: isExternalProject(projectPath),
+                    destinations: (target["destinations"] as? [String]) ?? []
                 )
             }
         }

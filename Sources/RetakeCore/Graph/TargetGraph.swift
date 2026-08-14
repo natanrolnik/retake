@@ -57,6 +57,8 @@ public struct TargetGraph: Sendable {
         /// A dependency Tuist generated a project for, rather than a target the
         /// repository wrote. Nothing here has previews worth rendering.
         public var isExternal: Bool
+        /// Tuist destinations, e.g. iPhone, iPad, appleTv, appleWatch, mac.
+        public var destinations: [String]
 
         public init(
             id: TargetID,
@@ -65,7 +67,8 @@ public struct TargetGraph: Sendable {
             sources: [String],
             resources: [String],
             buildableFolders: [BuildableFolder] = [],
-            isExternal: Bool = false
+            isExternal: Bool = false,
+            destinations: [String] = []
         ) {
             self.id = id
             self.productName = productName
@@ -74,6 +77,20 @@ public struct TargetGraph: Sendable {
             self.resources = resources
             self.buildableFolders = buildableFolders
             self.isExternal = isExternal
+            self.destinations = destinations
+        }
+
+        /// Whether this target can run on the platform being rendered.
+        ///
+        /// A watch or TV app has nothing to contribute to an iOS render, and pulling one
+        /// in makes the build fail on a machine that has no such simulator.
+        public func supports(_ platform: RenderPlatform) -> Bool {
+            guard !destinations.isEmpty else { return true }
+            let wanted: Set<String> = switch platform {
+            case .ios: ["iPhone", "iPad", "macWithiPadDesign"]
+            case .macos: ["mac", "macWithiPadDesign", "macCatalyst"]
+            }
+            return !wanted.isDisjoint(with: Set(destinations))
         }
 
         public func owns(_ path: String) -> Bool {
@@ -156,9 +173,9 @@ public struct TargetGraph: Sendable {
     ///
     /// Without this, "render everything" means every package Tuist generated a project
     /// for, and a run tries to host SwiftSyntax and GRDB.
-    public var renderableTargets: [Target] {
+    public func renderableTargets(for platform: RenderPlatform = .ios) -> [Target] {
         targets.values
-            .filter { !$0.isExternal && !isTestBundle($0.id) }
+            .filter { !$0.isExternal && !isTestBundle($0.id) && $0.supports(platform) }
             .sorted { $0.id < $1.id }
     }
 

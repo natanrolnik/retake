@@ -133,7 +133,7 @@ public enum ScopeResolver {
             isEverything: true,
             reasons: reasons,
             modules: [],
-            targets: graph.renderableTargets.map(\.id),
+            targets: graph.renderableTargets().map(\.id),
             warnings: warnings
         )
     }

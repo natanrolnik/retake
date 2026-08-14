@@ -32,12 +32,14 @@ enum HostSelector {
     static func select(
         graph: TargetGraph,
         modules: [String],
-        candidateHosts: [String]
+        candidateHosts: [String],
+        platform: RenderPlatform = .ios
     ) throws -> Selection {
         let assignments = try HostResolver.resolve(
             graph: graph,
             modules: modules,
-            candidateHosts: candidateHosts
+            candidateHosts: candidateHosts,
+            platform: platform
         )
         let anchor = assignments[0].host.linkedTargets[0].project
 

@@ -277,6 +277,42 @@ struct RenderableTargetTests {
         #expect(sample.isTestBundle(TargetGraph.TargetID(project: "/repo", name: "UITests")))
     }
 
+    @Test("Targets for other platforms are not rendered")
+    func otherPlatformsExcluded() {
+        // A watch or TV app has nothing to contribute to an iOS render, and pulling one
+        // in makes the build fail on a machine with no such simulator.
+        let sample = TargetGraph(
+            targets: Dictionary(uniqueKeysWithValues: [
+                ("App", ["iPhone", "iPad"]),
+                ("Watch", ["appleWatch"]),
+                ("TV", ["appleTv"]),
+                ("Shared", ["iPhone", "appleWatch", "appleTv"]),
+            ].map { name, destinations in
+                let id = TargetGraph.TargetID(project: "/repo", name: name)
+                return (id, TargetGraph.Target(
+                    id: id,
+                    productName: name,
+                    product: name == "App" ? "app" : "staticFramework",
+                    sources: [],
+                    resources: [],
+                    destinations: destinations
+                ))
+            }),
+            dependencies: [:]
+        )
+
+        #expect(sample.renderableTargets(for: .ios).map(\.id.name) == ["App", "Shared"])
+    }
+
+    @Test("A target that declares no destinations is assumed to fit")
+    func noDestinations() {
+        let id = TargetGraph.TargetID(project: "/repo", name: "Thing")
+        let target = TargetGraph.Target(id: id, productName: "Thing", sources: [], resources: [])
+
+        #expect(target.supports(.ios))
+        #expect(target.supports(.macos))
+    }
+
     @Test("Dependencies are not rendered, however many of them there are")
     func externalsExcluded() {
         let sample = graph([
@@ -287,7 +323,7 @@ struct RenderableTargetTests {
             ("GRDB", "framework", true),
         ])
 
-        #expect(sample.renderableTargets.map(\.id.name) == ["App", "Theme"])
+        #expect(sample.renderableTargets().map(\.id.name) == ["App", "Theme"])
     }
 
     @Test("A Tuist generated dependency project is external")
