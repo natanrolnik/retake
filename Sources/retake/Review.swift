@@ -58,6 +58,13 @@ struct Review: AsyncParsableCommand {
 
     @Flag(
         name: .long,
+        inversion: .prefixedNo,
+        help: "Include uncommitted changes. On by default, which is the point of running this locally; turn it off in CI, where a build step can dirty the tree and a pull request is defined by its commits."
+    )
+    var uncommitted: Bool = true
+
+    @Flag(
+        name: .long,
         help: "Render head twice and exclude previews that do not reproduce, rather than reporting them as changes."
     )
     var verify: Bool = false
@@ -122,9 +129,14 @@ struct Review: AsyncParsableCommand {
         let mergeBase = try git(["merge-base", base, "HEAD"], in: repoRoot)
         print("retake: comparing against \(base) at \(mergeBase.prefix(8))")
 
-        // Working tree included on purpose: uncommitted changes are exactly what a local
-        // review is for.
-        let changedFiles = try git(["diff", "--name-only", mergeBase], in: repoRoot)
+        // Locally the working tree is the point: reviewing what you have not committed
+        // yet is why you run this. In CI it is a liability, since a build step that
+        // rewrites a lockfile then looks like a change, and a file no target owns widens
+        // the scope to the entire repository.
+        let changedFilesCommand = uncommitted
+            ? ["diff", "--name-only", mergeBase]
+            : ["diff", "--name-only", mergeBase, "HEAD"]
+        let changedFiles = try git(changedFilesCommand, in: repoRoot)
             .split(separator: "\n")
             .map { String($0) }
             .filter { !$0.isEmpty }

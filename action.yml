@@ -52,7 +52,7 @@ inputs:
       Released version of retake to install. Defaults to the version this action ships
       with, which the release workflow checks against the tag.
     required: false
-    default: '0.4.0'
+    default: '0.4.1'
   artifact-name:
     description: Name of the uploaded artifact.
     required: false
@@ -204,6 +204,9 @@ runs:
           --runtime-sources "${{ steps.retake.outputs.runtime }}"
           --html "$OUT/report.html"
           --tuist "${{ steps.tuist.outputs.command }}"
+          # A pull request is its commits. Steps before this one, tuist install among
+          # them, rewrite tracked files, and those are not part of the change.
+          --no-uncommitted
         )
         [ -n "${{ inputs.simulator }}" ] && ARGS+=(--simulator "${{ inputs.simulator }}")
         [ -n "${{ inputs.modules }}" ] && ARGS+=(--modules ${{ inputs.modules }})
