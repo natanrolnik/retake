@@ -313,8 +313,17 @@ struct Render: AsyncParsableCommand {
             print("retake: warming the Tuist cache for \(targets.joined(separator: ", "))")
             let launch = tuistWorkingDirectory.map { URL(fileURLWithPath: $0) }
                 ?? URL(fileURLWithPath: selection.tuistRoot)
-            try Tuist(command: tuist, workingDirectory: launch)
-                .run(["cache"] + targets, streamOutput: true)
+            do {
+                try Tuist(command: tuist, workingDirectory: launch)
+                    .run(["cache"] + targets, streamOutput: true)
+            } catch {
+                // Warming is an optimisation. It fails for reasons that have nothing to
+                // do with rendering, a workspace with a tvOS target and no tvOS simulator
+                // among them, and a slower render beats no render.
+                FileHandle.standardError.write(Data(
+                    "retake: warning: warming the cache failed, continuing without it: \(error)\n".utf8
+                ))
+            }
         }
 
         var entries: [ManifestEntry] = []
