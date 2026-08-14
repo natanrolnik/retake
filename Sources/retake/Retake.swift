@@ -13,7 +13,7 @@ struct Retake: AsyncParsableCommand {
         commandName: "retake",
         abstract: "Render SwiftUI previews and diff them across commits.",
         subcommands: [
-            Review.self, ScopeCommand.self, Render.self, Diff.self,
+            Review.self, Snapshot.self, ScopeCommand.self, Render.self, Diff.self,
             Report.self, Publish.self, Comment.self, Verify.self,
         ]
     )

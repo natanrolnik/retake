@@ -1,0 +1,84 @@
+name: Release retake
+
+on:
+  push:
+    tags:
+      - '*'
+
+# macOS only, deliberately: retake drives xcodebuild and renders through AppKit and the
+# iOS simulator, none of which exist on Linux.
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build -c release --product retake --arch ${{ matrix.arch }}
+
+      # The binary is not enough on its own. retake compiles its runtime, and
+      # SnapshotPreviews, into the throwaway host project it generates in the repository
+      # under review, so those sources travel with it and are found relative to the
+      # executable at run time.
+      - name: Assemble the distribution
+        run: |
+          set -euo pipefail
+          NAME="retake-${{ github.ref_name }}-darwin-${{ matrix.arch }}"
+          mkdir -p "$NAME/bin" "$NAME/runtime/retake" "$NAME/runtime/snapshot-previews"
+
+          cp ".build/${{ matrix.arch }}-apple-macosx/release/retake" "$NAME/bin/retake"
+          cp -R Sources "$NAME/runtime/retake/Sources"
+
+          CHECKOUT=.build/checkouts/SnapshotPreviews-iOS
+          cp -R "$CHECKOUT/Sources" "$NAME/runtime/snapshot-previews/Sources"
+          cp -R "$CHECKOUT/PreviewsSupport" "$NAME/runtime/snapshot-previews/PreviewsSupport"
+          cp "$CHECKOUT/LICENSE" "$NAME/runtime/snapshot-previews/LICENSE" 2>/dev/null || true
+
+          tar -czf "$NAME.tar.gz" "$NAME"
+          echo "asset=$NAME.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Check the binary runs and can find its runtime
+        run: |
+          NAME="retake-${{ github.ref_name }}-darwin-${{ matrix.arch }}"
+          # The x86_64 build cannot run on an arm64 runner without Rosetta, so only the
+          # native slice is exercised here.
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            "$NAME/bin/retake" --help > /dev/null
+            "$NAME/bin/retake" render --help > /dev/null
+          fi
+          test -d "$NAME/runtime/retake/Sources/RetakeTestRuntime"
+          test -d "$NAME/runtime/snapshot-previews/Sources/SnapshotPreviewsCore"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: retake-darwin-${{ matrix.arch }}
+          path: ${{ env.asset }}
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            retake-"$TAG"-darwin-arm64.tar.gz \
+            retake-"$TAG"-darwin-x86_64.tar.gz \
+            --title "retake $TAG" \
+            --generate-notes

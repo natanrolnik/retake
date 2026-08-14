@@ -44,9 +44,6 @@ jobs:
 
       - uses: ./
         with:
-          # Build the tool from this pull request rather than from main, so a change to
-          # retake is exercised by its own fixture before it is released.
-          retake-ref: ${{ github.event.pull_request.head.sha }}
           working-directory: Fixtures/SampleApp
           simulator: iPhone 17
           deployment-target: '17.0'

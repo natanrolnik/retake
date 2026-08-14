@@ -43,10 +43,10 @@ inputs:
     description: Path to the Tuist repository to review.
     required: false
     default: '.'
-  retake-ref:
-    description: Ref of the retake repository to build the tool from.
+  retake-version:
+    description: Released version of retake to install, or "latest".
     required: false
-    default: 'main'
+    default: 'latest'
   artifact-name:
     description: Name of the uploaded artifact.
     required: false
@@ -111,54 +111,24 @@ runs:
         echo "Booting $DEVICE in the background"
         xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
 
-    - name: Check out retake
-      uses: actions/checkout@v4
-      with:
-        repository: natanrolnik/retake
-        ref: ${{ inputs.retake-ref }}
-        path: .retake-tool
-
-    - name: Identify the toolchain and retake revision
-      id: tool
+    # Installed from a release rather than built here: the tarball carries the binary
+    # and the runtime sources it compiles into the generated host project, so nothing is
+    # compiled on the runner and the version is whatever the tag says.
+    - name: Install retake
+      id: retake
       shell: bash
       run: |
-        echo "sha=$(git -C .retake-tool rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-        # The binary is toolchain specific, so a Swift upgrade must miss the cache. Keyed
-        # on the selected Xcode rather than `swiftc --version`: the first invocation of a
-        # Swift tool on a fresh runner triggers Xcode's first-launch setup, which took
-        # minutes and is pure latency this early in the job. The path carries the version.
-        echo "swift=$(xcode-select -p | tr -cd '[:alnum:].')" >> "$GITHUB_OUTPUT"
-
-    # The binary is the thing worth caching: on a hit nothing is compiled at all. Keyed
-    # on the exact retake revision, so a new revision rebuilds and an unchanged one
-    # never does.
-    - name: Restore the retake binary
-      id: binary-cache
-      uses: actions/cache@v4
-      with:
-        path: .retake-tool/.build/debug/retake
-        key: retake-bin-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ steps.tool.outputs.sha }}
-
-    # Only consulted when the binary is missing, to make that rebuild incremental rather
-    # than from scratch.
-    - name: Restore the retake build directory
-      if: steps.binary-cache.outputs.cache-hit != 'true'
-      uses: actions/cache@v4
-      with:
-        path: .retake-tool/.build
-        key: retake-build-${{ runner.os }}-${{ steps.tool.outputs.swift }}-${{ hashFiles('.retake-tool/Package.resolved') }}
-        restore-keys: |
-          retake-build-${{ runner.os }}-${{ steps.tool.outputs.swift }}-
-          retake-build-${{ runner.os }}-
-
-    - name: Build retake
-      if: steps.binary-cache.outputs.cache-hit != 'true'
-      shell: bash
-      working-directory: .retake-tool
-      # Debug, not release: retake only orchestrates xcodebuild and is I/O bound, so
-      # optimisation buys nothing, while release mode recompiles a whole module for any
-      # changed file and defeats the incremental restore below.
-      run: swift build --product retake
+        set -euo pipefail
+        if ! command -v mise >/dev/null 2>&1; then
+          echo "::error::mise is not on PATH. Add jdx/mise-action before this step."
+          exit 1
+        fi
+        mise use -g "github:natanrolnik/retake@${{ inputs.retake-version }}"
+        RETAKE="$(mise which retake)"
+        echo "bin=$RETAKE" >> "$GITHUB_OUTPUT"
+        # The runtime ships beside the binary, at <prefix>/runtime.
+        echo "runtime=$(cd "$(dirname "$RETAKE")/.." && pwd)/runtime" >> "$GITHUB_OUTPUT"
+        "$RETAKE" --help > /dev/null
 
     # Deliberately not installed here. The repository pins its own Tuist version, and a
     # different one can produce a graph that disagrees with the project, so the caller
@@ -205,7 +175,7 @@ runs:
       run: |
         set -euo pipefail
         OUT="${{ runner.temp }}/retake"
-        TOOL="$GITHUB_WORKSPACE/.retake-tool"
+        RETAKE="${{ steps.retake.outputs.bin }}"
 
         ARGS=(
           review
@@ -214,7 +184,7 @@ runs:
           --out "$OUT"
           --tolerance "${{ inputs.tolerance }}"
           --deployment-target "${{ inputs.deployment-target }}"
-          --runtime-sources "$TOOL"
+          --runtime-sources "${{ steps.retake.outputs.runtime }}"
           --html "$OUT/report.html"
           --tuist "${{ steps.tuist.outputs.command }}"
         )
@@ -227,7 +197,7 @@ runs:
         [ "${{ inputs.verify }}" = "true" ] && ARGS+=(--verify)
         [ "${{ steps.base-cache.outputs.cache-hit }}" = "true" ] && ARGS+=(--reuse-base)
 
-        "$TOOL/.build/debug/retake" "${ARGS[@]}"
+        "$RETAKE" "${ARGS[@]}"
 
         echo "report=$OUT/report.html" >> "$GITHUB_OUTPUT"
 
@@ -249,10 +219,10 @@ runs:
           [ -n "${{ github.event.pull_request.number }}" ] && PUBLISH+=(--pr "${{ github.event.pull_request.number }}")
           [ -n "${{ inputs.s3-endpoint }}" ] && PUBLISH+=(--endpoint "${{ inputs.s3-endpoint }}")
           [ -n "${{ inputs.s3-public-base-url }}" ] && PUBLISH+=(--public-base-url "${{ inputs.s3-public-base-url }}")
-          "$TOOL/.build/debug/retake" "${PUBLISH[@]}"
+          "$RETAKE" "${PUBLISH[@]}"
         fi
 
-        "$TOOL/.build/debug/retake" comment \
+        "$RETAKE" comment \
           --report "$OUT/diff/report.json" \
           --artifact-name "${{ inputs.artifact-name }}" \
           --artifact-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -282,7 +252,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
       run: |
-        "$GITHUB_WORKSPACE/.retake-tool/.build/debug/retake" comment \
+        "${{ steps.retake.outputs.bin }}" comment \
           --report "${{ runner.temp }}/retake/diff/report.json" \
           --pr "${{ github.event.pull_request.number }}" \
           --artifact-name "${{ inputs.artifact-name }}" \

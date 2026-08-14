@@ -18,11 +18,26 @@ public enum HTMLReport {
         public var inlineImages: Bool
         /// Previews that did not change are omitted unless this is set.
         public var includeUnchanged: Bool
+        public var style: Style
 
-        public init(title: String = "retake", inlineImages: Bool = true, includeUnchanged: Bool = false) {
+        public init(
+            title: String = "retake",
+            inlineImages: Bool = true,
+            includeUnchanged: Bool = false,
+            style: Style = .comparison
+        ) {
             self.title = title
             self.inlineImages = inlineImages
             self.includeUnchanged = includeUnchanged
+            self.style = style
+        }
+
+        /// What the reader is here for.
+        public enum Style: Sendable {
+            /// Before, after and the delta, for reviewing a change.
+            case comparison
+            /// One image per preview in a grid, for seeing what exists.
+            case catalogue
         }
     }
 
@@ -39,7 +54,11 @@ public enum HTMLReport {
 
         var html = ""
         html += header(title: options.title)
-        html += summary(report.summary, tolerance: report.tolerance)
+        if options.style == .comparison {
+            html += summary(report.summary, tolerance: report.tolerance)
+        } else {
+            html += #"<p class="note">\#(shown.count) previews across \#(grouped.count) modules.</p>"#
+        }
 
         if shown.isEmpty {
             html += #"<p class="empty">No visual changes.</p>"#
@@ -47,6 +66,7 @@ public enum HTMLReport {
 
         for (module, previews) in grouped {
             html += #"<section><h2>\#(escape(module)) <span class="count">\#(previews.count)</span></h2>"#
+            if options.style == .catalogue { html += #"<div class="gallery">"# }
             for preview in previews.sorted(by: { $0.previewID < $1.previewID }) {
                 html += card(
                     preview,
@@ -56,6 +76,8 @@ public enum HTMLReport {
                     options: options
                 )
             }
+            if options.style == .catalogue { html += "</div>" }
+            if options.style == .catalogue { html += "</div>" }
             html += "</section>"
         }
 
@@ -67,6 +89,7 @@ public enum HTMLReport {
                 <p>\#(escape(failure.message))</p></div>
                 """#
             }
+            if options.style == .catalogue { html += "</div>" }
             html += "</section>"
         }
 
@@ -119,6 +142,9 @@ public enum HTMLReport {
         options: Options
     ) -> String {
         let name = preview.displayName ?? preview.previewID.rawValue
+        guard options.style == .comparison else {
+            return catalogueCard(preview, headDirectory: headDirectory, options: options, name: name)
+        }
         var html = #"<article class="preview">"#
         html += #"""
         <header><span class="badge \#(preview.change.rawValue)">\#(label(for: preview.change))</span>
@@ -155,6 +181,25 @@ public enum HTMLReport {
         }
         html += "</article>"
         return html
+    }
+
+    /// One image with its name underneath, sized to sit in a grid.
+    private static func catalogueCard(
+        _ preview: PreviewDiff,
+        headDirectory: URL?,
+        options: Options,
+        name: String
+    ) -> String {
+        guard let path = preview.headPNG, let directory = headDirectory else { return "" }
+        let file = directory.appendingPathComponent(path)
+        let source = options.inlineImages ? dataURI(for: file) : file.path
+        guard let source else { return "" }
+        return #"""
+        <figure class="tile"><div class="shot">\#
+        <img loading="lazy" src="\#(escape(source))" alt="\#(escape(name))"></div>\#
+        <figcaption><b>\#(escape(name))</b><br><code>\#(escape(preview.previewID.rawValue))</code></figcaption>\#
+        </figure>
+        """#
     }
 
     private static func frame(_ caption: String, role: String, url: URL, options: Options) -> String {
@@ -326,6 +371,16 @@ public enum HTMLReport {
           display: flex; justify-content: space-between; font-size: 12px; color: var(--muted);
           margin-top: 6px;
         }
+        /* Catalogue: a wall of previews, each a readable thumbnail. */
+        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 20px; }
+        .tile { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+        .tile .shot {
+          border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+          height: 300px; display: grid; place-items: center; overflow: hidden; padding: 8px;
+        }
+        .tile .shot img { max-width: 100%; max-height: 100%; width: auto; height: auto; border: 0; }
+        .tile figcaption { font-size: 12px; line-height: 1.35; }
+        .tile code { font-size: 11px; }
         .zoom { display: none; }
         figure label { cursor: zoom-in; display: block; }
         .zoom:checked + label { cursor: zoom-out; }
