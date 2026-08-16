@@ -25,7 +25,7 @@ to maintain, nothing added to your dependency graph.
 ## Install
 
 ```bash
-mise use -g github:natanrolnik/retake@0.5.2
+mise use -g github:natanrolnik/retake@0.6.0
 ```
 
 Or build it:
@@ -97,8 +97,11 @@ the working tree, diff, and write the report.
 retake review --repo . --base main --out ./out
 ```
 
-The base comes from a worktree so your checkout keeps its uncommitted work — reviewing
-changes you have not committed yet is the point of running it locally.
+With a clean tree the base is checked out in place, so both renders share one
+DerivedData: it is keyed by project path, so a worktree somewhere else reuses nothing and
+compiles the world twice. With uncommitted changes the base goes to a worktree instead and
+your checkout is left alone, because reviewing work you have not committed yet is the
+point of running it locally.
 
 Useful flags: `--modules`, `--hosts`, `--settle`, `--verify`, `--tolerance`,
 `--reuse-base`, `--ignore`.
@@ -202,7 +205,7 @@ jobs:
       - uses: jdx/mise-action@v2  # retake requires Tuist, and does not install it
       - run: tuist install
 
-      - uses: natanrolnik/retake@0.5.2
+      - uses: natanrolnik/retake@0.6.0
         with:
           hosts: MyApp
 ```
@@ -229,7 +232,7 @@ an image source in a comment. Inline images need a bucket.
           role-to-assume: arn:aws:iam::<account>:role/retake-ci
           aws-region: us-east-1
 
-      - uses: natanrolnik/retake@0.5.2
+      - uses: natanrolnik/retake@0.6.0
         with:
           hosts: MyApp
           s3-bucket: my-preview-snapshots
@@ -280,11 +283,15 @@ something has to host them. retake writes a throwaway Tuist project into a scrat
 directory, links your existing targets by path, renders through an XCTest bundle in the
 simulator, and deletes the directory.
 
-Which host it picks follows what previews need to be reachable:
+An app hosts only the previews declared in the app target itself, since one app cannot
+link another. Every other module renders in a synthesised app that links it directly.
 
-- an app in scope hosts them itself, since one app cannot link another;
-- frameworks only, and it synthesises an empty app linking just those frameworks, so a
-  leaf change never builds the whole app.
+That holds even when an app in scope already links the module, and the reason is the
+linker: a static framework contributes only the object files something references. A
+preview in a file the host app never touches is dropped, and then it does not exist at
+runtime to be found — a silent false negative, with nothing in the report to suggest
+anything is missing. The synthesised host passes `-all_load`, so every object file
+survives. It is also the cheaper build for a leaf change.
 
 Modules are partitioned across hosts, so a module shared by several apps renders exactly
 once, in the first of them by name. That assignment is stable between the base and head

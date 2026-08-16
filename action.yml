@@ -20,9 +20,9 @@ inputs:
     required: false
     default: 'false'
   tolerance:
-    description: Changed-pixel percentage at or below which a preview counts as unchanged.
+    description: Changed-pixel percentage at or below which a preview counts as unchanged. Below roughly 0.1% is renderer jitter rather than a change.
     required: false
-    default: '0.01'
+    default: '0.1'
   verify:
     description: Render head twice and exclude previews that do not reproduce.
     required: false
@@ -56,7 +56,7 @@ inputs:
       Released version of retake to install. Defaults to the version this action ships
       with, which the release workflow checks against the tag.
     required: false
-    default: '0.5.2'
+    default: '0.6.0'
   artifact-name:
     description: Name of the uploaded artifact.
     required: false
