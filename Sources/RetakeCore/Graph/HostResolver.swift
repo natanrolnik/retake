@@ -56,6 +56,13 @@ public enum HostResolver {
 
     /// Splits the modules in scope across one render pass per host.
     ///
+    /// An app hosts only the previews declared in the app target itself. Every other
+    /// module is hosted by a synthesised app, even when some app in scope already links
+    /// it, because a static framework linked normally contributes only the object files
+    /// something references: a preview in a file the app never touches is dropped by the
+    /// linker and silently never discovered. The synthesised host passes `-all_load`, so
+    /// every object file survives. It is also the cheaper build for a leaf change.
+    ///
     /// Each module is assigned to exactly one host, because rendering a shared module in
     /// two hosts would produce the same preview twice, and the same preview can render
     /// differently in different hosts. Assignment is by sorted name so it is stable
@@ -94,27 +101,20 @@ public enum HostResolver {
         }
         let sortedApps = apps.sorted { $0.id < $1.id }
 
-        // An app hosts itself plus everything it links, so a module shared by several
-        // apps renders once, in the first of them by name.
-        var claimed: Set<String> = []
-        var assignments: [HostAssignment] = []
-        for app in sortedApps {
-            let reachable = graph.transitiveDependencies(of: [app.id])
-            let owned = renderable
-                .filter { reachable.contains($0.id) || $0.id == app.id }
-                .map(\.productName)
-                .filter { claimed.insert($0).inserted }
-                .sorted()
-            guard !owned.isEmpty else { continue }
-            assignments.append(HostAssignment(host: .existingApp(app.id), modules: owned))
-        }
+        // An app is the only thing that can reach its own previews, so it hosts those and
+        // nothing else.
+        let inScopeApps = Set(renderable.map(\.id))
+        var assignments: [HostAssignment] = sortedApps
+            .filter { inScopeApps.contains($0.id) }
+            .map { HostAssignment(host: .existingApp($0.id), modules: [$0.productName]) }
 
-        // Whatever no chosen app links needs a host of its own.
-        let orphans = renderable.filter { !claimed.contains($0.productName) && !graph.isApp($0.id) }
-        if !orphans.isEmpty {
+        // Everything that is not an app renders in a synthesised host, which force-loads
+        // what it links rather than trusting an app to reference the right files.
+        let frameworks = renderable.filter { !graph.isApp($0.id) }
+        if !frameworks.isEmpty {
             assignments.append(HostAssignment(
-                host: .synthesized(linking: orphans.map(\.id).sorted()),
-                modules: orphans.map(\.productName).sorted()
+                host: .synthesized(linking: frameworks.map(\.id).sorted()),
+                modules: frameworks.map(\.productName).sorted()
             ))
         }
 

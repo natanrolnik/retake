@@ -57,8 +57,12 @@ struct HostResolverTests {
         ])
     }
 
-    @Test("An app in scope hosts itself and what it links")
-    func appHostsWhatItLinks() throws {
+    @Test("An app hosts its own previews, not those of what it links")
+    func appHostsOnlyItself() throws {
+        // The app links Theme and Toss, but linking is not enough: a static framework
+        // contributes only the object files something references, so a preview in a file
+        // the app never touches would be dropped by the linker and never discovered. The
+        // synthesised host force-loads instead.
         let assignments = try HostResolver.resolve(
             graph: sample,
             modules: ["App", "Theme", "Toss"],
@@ -66,20 +70,27 @@ struct HostResolverTests {
         )
 
         #expect(assignments == [
-            HostAssignment(host: .existingApp(id("App")), modules: ["App", "Theme", "Toss"]),
+            HostAssignment(host: .existingApp(id("App")), modules: ["App"]),
+            HostAssignment(
+                host: .synthesized(linking: [id("Theme"), id("Toss")]),
+                modules: ["Theme", "Toss"]
+            ),
         ])
     }
 
-    @Test("Several apps become several passes, each with its own modules")
+    @Test("Several apps become several passes, plus one for the frameworks")
     func severalAppsBecomeSeveralPasses() throws {
         // Previously an error. A change to a module shared by an app and a watch app is
         // ordinary, not exceptional.
         let assignments = try HostResolver.resolve(graph: sample, modules: ["App", "Watch", "Theme"])
 
-        #expect(assignments.count == 2)
-        #expect(assignments[0] == HostAssignment(host: .existingApp(id("App")), modules: ["App", "Theme"]))
-        // Theme is claimed by App, so Watch renders only its own previews.
+        #expect(assignments.count == 3)
+        #expect(assignments[0] == HostAssignment(host: .existingApp(id("App")), modules: ["App"]))
         #expect(assignments[1] == HostAssignment(host: .existingApp(id("Watch")), modules: ["Watch"]))
+        #expect(assignments[2] == HostAssignment(
+            host: .synthesized(linking: [id("Theme")]),
+            modules: ["Theme"]
+        ))
     }
 
     @Test("A shared module is rendered exactly once")
@@ -107,16 +118,32 @@ struct HostResolverTests {
         #expect(assignments.allSatisfy { !$0.modules.contains("Watch") })
     }
 
-    @Test("Modules no chosen host links still get rendered")
-    func orphansGetASynthesisedHost() throws {
+    @Test("A named host that is not in scope hosts nothing")
+    func hostOutsideScopeIsNotBuilt() throws {
         let assignments = try HostResolver.resolve(
             graph: sample,
-            modules: ["Theme", "Toss", "App"],
+            modules: ["Theme", "Toss"],
             candidateHosts: ["Watch"]
         )
 
-        // Watch links only Theme, so Toss and App need somewhere else to go.
-        #expect(assignments.contains { $0.host == .existingApp(id("Watch")) })
+        // Nothing in scope is an app, so building Watch would be pure cost.
+        #expect(assignments == [
+            HostAssignment(
+                host: .synthesized(linking: [id("Theme"), id("Toss")]),
+                modules: ["Theme", "Toss"]
+            ),
+        ])
+    }
+
+    @Test("An app whose previews are in scope is hosted even beside frameworks")
+    func appAndFrameworksBothRender() throws {
+        let assignments = try HostResolver.resolve(
+            graph: sample,
+            modules: ["Theme", "Toss", "App"],
+            candidateHosts: ["App"]
+        )
+
+        #expect(assignments.contains { $0.host == .existingApp(id("App")) })
         #expect(assignments.contains { assignment in
             if case .synthesized = assignment.host { return assignment.modules.contains("Toss") }
             return false
