@@ -312,6 +312,7 @@ struct Render: AsyncParsableCommand {
             candidateHosts: hosts,
             platform: platform
         )
+        for warning in selection.warnings { print("retake: warning: \(warning)") }
         print("retake: \(selection.explanation)")
 
         let outputDirectory = URL(fileURLWithPath: out)

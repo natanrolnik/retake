@@ -16,6 +16,8 @@ enum HostSelector {
         /// Directory holding the repo's Tuist.swift.
         var tuistRoot: String
         var explanation: String
+        /// Never silent: a target dropped without a word reads as one with no previews.
+        var warnings: [String] = []
     }
 
     enum Error: Swift.Error, CustomStringConvertible {
@@ -54,12 +56,25 @@ enum HostSelector {
             }
             .joined(separator: "; ")
 
+        let embedded = graph.targets.values
+            .filter { graph.isEmbeddedBundle($0.id) && !$0.isExternal }
+            .filter { modules.isEmpty || modules.contains($0.productName) }
+            .map(\.productName)
+            .sorted()
+
         return Selection(
             assignments: assignments,
             tuistRoot: try tuistRoot(startingAt: anchor),
             explanation: assignments.count == 1
                 ? "rendering in \(explanation)"
-                : "\(assignments.count) render passes: \(explanation)"
+                : "\(assignments.count) render passes: \(explanation)",
+            warnings: embedded.isEmpty ? [] : [
+                """
+                not rendering \(embedded.joined(separator: ", ")): an app embeds these \
+                rather than linking them, so they run as their own process and their \
+                previews are not reachable from a host
+                """,
+            ]
         )
     }
 

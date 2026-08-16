@@ -173,13 +173,29 @@ public struct TargetGraph: Sendable {
         return product.hasSuffix("tests")
     }
 
-    /// Targets worth rendering: the repository's own, excluding test bundles.
+    /// An extension, app clip or watch app: something a host app embeds rather than
+    /// links, and which therefore cannot be rendered.
+    ///
+    /// A synthesised host embeds it and the build fails validation, because an
+    /// extension's bundle id has to be prefixed by its host app's. Hosting it in the real
+    /// app does not work either: an embedded bundle runs as its own process, so its
+    /// preview metadata never appears in the app's.
+    public func isEmbeddedBundle(_ id: TargetID) -> Bool {
+        let product = (targets[id]?.product ?? "").replacingOccurrences(of: "_", with: "").lowercased()
+        return product.hasSuffix("extension") || product.hasSuffix("clip") || product == "watch2app"
+    }
+
+    /// Targets worth rendering: the repository's own, excluding test bundles and
+    /// anything a host app embeds rather than links.
     ///
     /// Without this, "render everything" means every package Tuist generated a project
     /// for, and a run tries to host SwiftSyntax and GRDB.
     public func renderableTargets(for platform: RenderPlatform = .ios) -> [Target] {
         targets.values
-            .filter { !$0.isExternal && !isTestBundle($0.id) && $0.supports(platform) }
+            .filter {
+                !$0.isExternal && !isTestBundle($0.id) && !isEmbeddedBundle($0.id)
+                    && $0.supports(platform)
+            }
             .sorted { $0.id < $1.id }
     }
 

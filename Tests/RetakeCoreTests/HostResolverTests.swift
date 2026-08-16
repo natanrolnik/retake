@@ -32,9 +32,10 @@ private let sample = TargetGraph(
         target("Watch", product: "app"),
         target("ThemePreview", product: "app"),
         target("AppTests", product: "unitTests"),
+        target("Widget", product: "app_extension"),
     ].map { ($0.id, $0) }),
     dependencies: [
-        id("App"): [id("Theme"), id("Toss")],
+        id("App"): [id("Theme"), id("Toss"), id("Widget")],
         id("Watch"): [id("Theme")],
         id("ThemePreview"): [id("Theme")],
     ]
@@ -167,6 +168,19 @@ struct HostResolverTests {
         #expect(throws: HostResolver.Error.unknownHost("Theme")) {
             try HostResolver.resolve(graph: sample, modules: [], candidateHosts: ["Theme"])
         }
+    }
+
+    @Test("An extension is never linked into a host")
+    func extensionsAreNotRendered() throws {
+        // A synthesised host embeds it and the build fails validation, because an
+        // extension's bundle id has to be prefixed by its host app's. Found the hard way
+        // on PocketUmpire, whose widget broke every render.
+        let assignments = try HostResolver.resolve(graph: sample, modules: [])
+
+        #expect(assignments.allSatisfy { !$0.modules.contains("Widget") })
+        #expect(assignments.allSatisfy { assignment in
+            !assignment.host.linkedTargets.contains(id("Widget"))
+        })
     }
 
     @Test("An empty scope has nothing to host")

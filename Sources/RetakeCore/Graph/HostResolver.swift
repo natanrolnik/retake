@@ -82,7 +82,8 @@ public enum HostResolver {
             ? graph.renderableTargets(for: platform)
             : graph.targets.values.filter { modules.contains($0.productName) }
         let renderable = inScope.filter {
-            !graph.isTestBundle($0.id) && !$0.isExternal && $0.supports(platform)
+            !graph.isTestBundle($0.id) && !graph.isEmbeddedBundle($0.id)
+                && !$0.isExternal && $0.supports(platform)
         }
         guard !renderable.isEmpty else { throw Error.noTargetsInScope }
 
