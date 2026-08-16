@@ -11,9 +11,10 @@ import Foundation
 
 /// Renders the merge base and the working tree, then diffs and reports.
 ///
-/// The base is rendered from a detached git worktree rather than by checking out the
-/// base ref, so the working tree keeps whatever uncommitted work is in it. That is the
-/// point of running this locally: reviewing changes that are not committed yet.
+/// With a clean tree the base is checked out in place, so both renders share one
+/// DerivedData: it is keyed by project path, and a worktree elsewhere reuses nothing.
+/// With uncommitted changes the base goes to a detached worktree instead, because
+/// reviewing work that is not committed yet is the point of running this locally.
 struct Review: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Render before and after, diff them, and write a report. The whole loop."
@@ -44,8 +45,11 @@ struct Review: AsyncParsableCommand {
     @Option(name: .long, help: "Appearance to force on both sides.")
     var appearance: Appearance = .light
 
+    // Measured rather than guessed: on a real app the renderer's own jitter clusters
+    // below 0.1%, while the smallest change anyone actually made showed up at 0.5%.
+    // Anything between the two is left to --verify, which decides it empirically.
     @Option(name: .long, help: "Changed-pixel percentage at or below which a preview counts as unchanged.")
-    var tolerance: Double = 0.01
+    var tolerance: Double = 0.1
 
     @Option(name: .long, help: "Per-channel delta below which two pixels count as equal.")
     var pixelThreshold: Int = 0
@@ -177,20 +181,52 @@ struct Review: AsyncParsableCommand {
             atPath: baseSnapshots.appendingPathComponent(Manifest.fileName).path
         )
 
+        // Rendering the base in the working directory itself is much faster, because
+        // DerivedData is keyed by project path: a worktree lives somewhere else and so
+        // shares no compiled output with the head render at all. It is only safe when
+        // there is nothing to lose, which is always true in CI and never the point
+        // locally, where reviewing uncommitted work is why the command exists.
+        let dirty = !(try git(["status", "--porcelain"], in: repoRoot)).isEmpty
+        let inPlace = !dirty
+        // A branch name when there is one, so the checkout comes back attached; a commit
+        // when CI has already detached it.
+        let branch = (try? git(["symbolic-ref", "--quiet", "--short", "HEAD"], in: repoRoot)) ?? ""
+        let restoreTo = branch.isEmpty ? try git(["rev-parse", "HEAD"], in: repoRoot) : branch
+
         if needsBase {
-            try? FileManager.default.removeItem(at: worktree)
-            print("retake: checking out the base into a worktree")
-            _ = try Shell.runChecked(
-                "/usr/bin/env",
-                ["git", "worktree", "add", "--detach", worktree.path, mergeBase],
-                currentDirectory: URL(fileURLWithPath: repoRoot)
-            )
+            if inPlace {
+                print("retake: checking out the base in place, so both renders share DerivedData")
+                _ = try Shell.runChecked(
+                    "/usr/bin/env",
+                    ["git", "checkout", "--detach", "--force", "--quiet", mergeBase],
+                    currentDirectory: URL(fileURLWithPath: repoRoot)
+                )
+            } else {
+                try? FileManager.default.removeItem(at: worktree)
+                print("retake: uncommitted changes present, checking out the base into a worktree")
+                _ = try Shell.runChecked(
+                    "/usr/bin/env",
+                    ["git", "worktree", "add", "--detach", worktree.path, mergeBase],
+                    currentDirectory: URL(fileURLWithPath: repoRoot)
+                )
+            }
         } else {
             print("retake: reusing the existing base render")
         }
 
-        defer {
-            if needsBase {
+        // Restoring the checkout is not optional: leaving the repository detached at the
+        // merge base would be a far worse outcome than a failed render.
+        var restored = false
+        func restoreCheckout() {
+            guard needsBase, !restored else { return }
+            restored = true
+            if inPlace {
+                _ = try? Shell.run(
+                    "/usr/bin/env",
+                    ["git", "checkout", "--force", "--quiet", restoreTo],
+                    currentDirectory: URL(fileURLWithPath: repoRoot)
+                )
+            } else {
                 _ = try? Shell.run(
                     "/usr/bin/env",
                     ["git", "worktree", "remove", worktree.path, "--force"],
@@ -198,12 +234,13 @@ struct Review: AsyncParsableCommand {
                 )
             }
         }
+        defer { restoreCheckout() }
 
         if needsBase {
-            // The same subdirectory, inside the worktree.
-            let baseProject = projectSubpath.isEmpty
-                ? worktree
-                : worktree.appendingPathComponent(projectSubpath)
+            // In place that is the project itself; in a worktree, the same subdirectory.
+            let baseProject = inPlace
+                ? projectDirectory
+                : (projectSubpath.isEmpty ? worktree : worktree.appendingPathComponent(projectSubpath))
 
             // Only when the repository actually declares external dependencies: with no
             // Tuist/Package.swift there is nothing to resolve, and Tuist treats being
@@ -220,6 +257,10 @@ struct Review: AsyncParsableCommand {
             let baseGraph = try graph(of: baseProject, label: "base")
             try await render(graph: baseGraph, modules: renderedModules, out: baseSnapshots, label: "base")
         }
+
+        // The head render has to see head sources, so the checkout goes back now rather
+        // than when the command exits.
+        restoreCheckout()
 
         try await render(graph: headGraph, modules: renderedModules, out: headSnapshots, label: "head")
 
