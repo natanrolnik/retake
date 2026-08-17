@@ -56,7 +56,7 @@ inputs:
       Released version of retake to install. Defaults to the version this action ships
       with, which the release workflow checks against the tag.
     required: false
-    default: '0.6.1'
+    default: '0.7.0'
   artifact-name:
     description: Name of the uploaded artifact.
     required: false
@@ -102,9 +102,44 @@ outputs:
   report:
     description: Path to the generated HTML report.
     value: ${{ steps.review.outputs.report }}
+  report-json:
+    description: Path to report.json, the machine readable form of the same run.
+    value: ${{ steps.review.outputs.report-json }}
+  report-url:
+    description: Published URL of the HTML report. Empty unless s3-bucket is set.
+    value: ${{ steps.review.outputs.report-url }}
   summary:
-    description: One-line summary, e.g. "3 changed · 1 new · 0 removed".
+    description: One-line summary, e.g. "3 changed · 1 new · 0 removed · 2 unstable".
     value: ${{ steps.review.outputs.summary }}
+  changed:
+    description: Number of previews whose rendering changed.
+    value: ${{ steps.review.outputs.changed }}
+  new:
+    description: Number of previews that did not exist on the base.
+    value: ${{ steps.review.outputs.new }}
+  removed:
+    description: Number of previews that existed on the base and no longer render.
+    value: ${{ steps.review.outputs.removed }}
+  unchanged:
+    description: Number of previews that rendered identically.
+    value: ${{ steps.review.outputs.unchanged }}
+  unstable:
+    description: >
+      Number of previews excluded because they did not reproduce on the same commit.
+      Only ever non-zero when verify is on. A real change can hide in here, so it is
+      worth surfacing rather than treating as noise.
+    value: ${{ steps.review.outputs.unstable }}
+  failures:
+    description: Number of previews that failed to render at all.
+    value: ${{ steps.review.outputs.failures }}
+  total:
+    description: Number of previews compared, across every bucket.
+    value: ${{ steps.review.outputs.total }}
+  has-changes:
+    description: >
+      'true' when anything changed, was added or was removed. The one output most
+      workflows want, so a later step can gate on it without parsing numbers.
+    value: ${{ steps.review.outputs.has-changes }}
 
 runs:
   using: composite
@@ -256,6 +291,49 @@ runs:
 
         # The job summary is the version nobody has to download.
         cat "$OUT/comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+        # Counts for later steps, read after publishing so report-url is populated.
+        # Parsed here rather than by a retake subcommand because this action installs a
+        # released binary: a new command would not exist in the version it pins.
+        # Never fatal — a workflow should not lose a finished render to a parsing slip.
+        python3 - "$OUT/diff/report.json" >> "$GITHUB_OUTPUT" <<'PYEOF' || echo "::warning::could not read report.json; the count outputs are empty"
+        import json, sys
+
+        report = json.load(open(sys.argv[1]))
+        previews = report.get("previews", [])
+        counts = {}
+        for preview in previews:
+            change = preview.get("change", "unchanged")
+            counts[change] = counts.get(change, 0) + 1
+
+        # "added" and "new" name the same bucket; the output uses the word the report
+        # prints, so what a workflow reads matches what a reviewer sees.
+        changed = counts.get("changed", 0)
+        added = counts.get("added", 0)
+        removed = counts.get("removed", 0)
+        unstable = counts.get("unstable", 0)
+        unchanged = counts.get("unchanged", 0)
+        failures = len(report.get("failures", []))
+
+        summary = f"{changed} changed · {added} new · {removed} removed"
+        if unstable:
+            summary += f" · {unstable} unstable"
+
+        for key, value in [
+            ("changed", changed),
+            ("new", added),
+            ("removed", removed),
+            ("unchanged", unchanged),
+            ("unstable", unstable),
+            ("failures", failures),
+            ("total", len(previews)),
+            ("has-changes", str(changed + added + removed > 0).lower()),
+            ("summary", summary),
+            ("report-json", sys.argv[1]),
+            ("report-url", report.get("reportURL") or ""),
+        ]:
+            print(f"{key}={value}")
+        PYEOF
 
     - name: Upload the report
       uses: actions/upload-artifact@v4

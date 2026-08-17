@@ -25,7 +25,7 @@ to maintain, nothing added to your dependency graph.
 ## Install
 
 ```bash
-mise use -g github:natanrolnik/retake@0.6.1
+mise use -g github:natanrolnik/retake@0.7.0
 ```
 
 Or build it:
@@ -205,7 +205,7 @@ jobs:
       - uses: jdx/mise-action@v2  # retake requires Tuist, and does not install it
       - run: tuist install
 
-      - uses: natanrolnik/retake@0.6.1
+      - uses: natanrolnik/retake@0.7.0
         with:
           hosts: MyApp
 ```
@@ -232,7 +232,7 @@ an image source in a comment. Inline images need a bucket.
           role-to-assume: arn:aws:iam::<account>:role/retake-ci
           aws-region: us-east-1
 
-      - uses: natanrolnik/retake@0.6.1
+      - uses: natanrolnik/retake@0.7.0
         with:
           hosts: MyApp
           s3-bucket: my-preview-snapshots
@@ -265,6 +265,58 @@ are skipped there. The artifact and the job summary are still produced.
 | `ignore` | Globs for files that cannot affect rendering. Defaults cover `.github`, markdown and docs; without them a single unowned file widens the scope to everything |
 | `cache-profile` | Tuist binary cache profile, so dependencies come from prebuilt binaries |
 | `simulator` | Pins the device. Omitted, retake picks the runner's newest available iPhone and prints it |
+
+### Outputs
+
+The action reports what it found, so later steps do not have to re-read the report.
+
+| Output | Example | Meaning |
+| --- | --- | --- |
+| `has-changes` | `true` | Anything changed, added or removed. The one most workflows want |
+| `summary` | `1 changed · 1 new · 0 removed · 8 unstable` | The same line the comment leads with |
+| `changed` / `new` / `removed` | `1` / `1` / `0` | Counts per bucket |
+| `unchanged` / `total` | `44` / `54` | Everything compared |
+| `unstable` | `8` | Previews excluded for not reproducing. Only ever non-zero with `verify` |
+| `failures` | `0` | Previews that failed to render at all |
+| `report` / `report-json` | `/Users/runner/work/_temp/retake/report.html` | Paths on the runner |
+| `report-url` | `https://…` | Published URL, empty unless `s3-bucket` is set |
+
+Give the step an `id` and read them:
+
+```yaml
+      - uses: natanrolnik/retake@0.7.0
+        id: previews
+        with:
+          hosts: MyApp
+
+      - name: Label the pull request when the UI moved
+        if: steps.previews.outputs.has-changes == 'true'
+        run: gh pr edit "$PR" --add-label ui-changed
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Tell the team
+        if: steps.previews.outputs.has-changes == 'true'
+        run: |
+          curl -sS -X POST "$SLACK_WEBHOOK" -d @- <<JSON
+          {"text": "${{ steps.previews.outputs.summary }} — ${{ steps.previews.outputs.report-url }}"}
+          JSON
+```
+
+`unstable` is worth watching rather than ignoring. A preview that does not reproduce is
+excluded from the comparison, so a real change can hide inside that count — a view whose
+content arrives asynchronously, or one drawing a map, will sit there indefinitely. Failing
+a job on it is usually too strict; surfacing it is not:
+
+```yaml
+      - name: Warn about previews that cannot be compared
+        if: steps.previews.outputs.unstable != '0'
+        run: echo "::warning::${{ steps.previews.outputs.unstable }} previews did not reproduce and were excluded. Try settle, or check for a map or an async load."
+```
+
+Counts come from `report.json` and are never fatal: if it cannot be parsed the outputs are
+empty and the job still keeps its render.
 
 ### What it costs
 
