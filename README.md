@@ -25,7 +25,7 @@ to maintain, nothing added to your dependency graph.
 ## Install
 
 ```bash
-mise use -g github:natanrolnik/retake@0.7.7
+mise use -g github:natanrolnik/retake@0.7.8
 ```
 
 Or build it:
@@ -210,7 +210,7 @@ jobs:
       - uses: jdx/mise-action@v2  # retake requires Tuist, and does not install it
       - run: tuist install
 
-      - uses: natanrolnik/retake@0.7.7
+      - uses: natanrolnik/retake@0.7.8
         with:
           hosts: MyApp
 ```
@@ -237,7 +237,7 @@ an image source in a comment. Inline images need a bucket.
           role-to-assume: arn:aws:iam::<account>:role/retake-ci
           aws-region: us-east-1
 
-      - uses: natanrolnik/retake@0.7.7
+      - uses: natanrolnik/retake@0.7.8
         with:
           hosts: MyApp
           s3-bucket: my-preview-snapshots
@@ -252,7 +252,24 @@ an image source in a comment. Inline images need a bucket.
 | --- | --- | --- |
 | `public` | World readable | Simplest; anyone with the URL sees the images |
 | `cdn` | Behind `s3-public-base-url` | A custom domain or CDN in front |
-| `presigned` | Fully private | URLs expire, capped at 7 days by SigV4 |
+| `presigned` | Fully private | URLs expire, and cannot outlive the credentials that signed them |
+
+**A presigned URL dies with the credentials that signed it.** Assuming a role over OIDC
+gives temporary credentials lasting an hour by default, so a URL asking for a day stops
+working after sixty minutes and the images in the comment break with it. SigV4 accepts the
+longer expiry without complaining, so retake warns instead. To get longer links, raise the
+role's `MaxSessionDuration` and ask for it:
+
+```yaml
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::<account>:role/retake-ci
+          role-duration-seconds: 43200   # 12h, and no longer than MaxSessionDuration
+          aws-region: us-east-1
+```
+
+For links that have to outlive the job entirely, use `public` or `cdn`. The artifact and
+the job summary do not expire either way.
 
 Set a **lifecycle rule** expiring the prefix. Every push writes a fresh timestamped
 prefix, so the bucket grows forever without one.
@@ -305,7 +322,7 @@ jobs:
 
       # …mise, tuist install…
 
-      - uses: natanrolnik/retake@0.7.7
+      - uses: natanrolnik/retake@0.7.8
         with:
           hosts: MyApp
           # Empty on a dispatched run unless passed, and without it there is no pull
@@ -331,7 +348,7 @@ The action reports what it found, so later steps do not have to re-read the repo
 Give the step an `id` and read them:
 
 ```yaml
-      - uses: natanrolnik/retake@0.7.7
+      - uses: natanrolnik/retake@0.7.8
         id: previews
         with:
           hosts: MyApp

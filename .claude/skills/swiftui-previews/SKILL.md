@@ -12,13 +12,13 @@ otherwise be a guess.
 ## Install
 
 ```bash
-mise use -g github:natanrolnik/retake@0.7.7
+mise use -g github:natanrolnik/retake@0.7.8
 ```
 
 Or per project, pinned in `mise.toml`:
 
 ```bash
-mise use github:natanrolnik/retake@0.7.7
+mise use github:natanrolnik/retake@0.7.8
 ```
 
 Check it and the machine's simulators:

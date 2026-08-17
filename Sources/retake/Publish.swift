@@ -86,6 +86,23 @@ struct Publish: AsyncParsableCommand {
             region: region,
             endpoint: endpoint.flatMap(URL.init(string:))
         )
+        // A presigned URL cannot outlive the credentials that signed it. Temporary ones
+        // from an assumed role last an hour by default, so a link asking for a day dies
+        // in sixty minutes with InvalidAccessKeyId, and the images in a pull request
+        // comment go with it. SigV4 accepts the longer expiry without complaint, which is
+        // why this has to be said out loud.
+        if urlMode == .presigned, s3.sessionToken != nil, presignExpires > 3600 {
+            print(
+                """
+                retake: warning: signing \(presignExpires)s URLs with temporary credentials. \
+                They stop working when the session ends, an hour after it starts unless the \
+                role allows longer and the caller asks for it (role-duration-seconds, and \
+                the role's MaxSessionDuration). Use a public bucket or a CDN for links that \
+                have to outlive the job.
+                """
+            )
+        }
+
         let naming = ObjectNaming(
             prefix: prefix,
             repository: repository,
