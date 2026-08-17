@@ -177,9 +177,19 @@ struct Review: AsyncParsableCommand {
         let worktree = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("retake-base-\(mergeBase.prefix(8))")
 
-        let needsBase = !reuseBase || !FileManager.default.fileExists(
+        // A cached base is only reusable if it was rendered for the same modules. When a
+        // later push narrows the scope, a base holding previews the head never renders
+        // reports them all as removed: 69 of them, on the run that motivated this.
+        let scopeSignature = renderedModules.sorted().joined(separator: ",")
+        let scopeMarker = baseSnapshots.appendingPathComponent("scope.txt")
+        let cachedScope = try? String(contentsOf: scopeMarker, encoding: .utf8)
+        let hasBaseManifest = FileManager.default.fileExists(
             atPath: baseSnapshots.appendingPathComponent(Manifest.fileName).path
         )
+        if reuseBase, hasBaseManifest, cachedScope != scopeSignature {
+            print("retake: the cached base covers different modules; rendering it again")
+        }
+        let needsBase = !reuseBase || !hasBaseManifest || cachedScope != scopeSignature
 
         // Rendering the base in the working directory itself is much faster, because
         // DerivedData is keyed by project path: a worktree lives somewhere else and so
@@ -272,6 +282,10 @@ struct Review: AsyncParsableCommand {
                     entries: []
                 ).write(to: baseSnapshots)
             }
+        }
+
+        if needsBase {
+            try? Data(scopeSignature.utf8).write(to: scopeMarker)
         }
 
         // The head render has to see head sources, so the checkout goes back now rather

@@ -56,7 +56,7 @@ inputs:
       Released version of retake to install. Defaults to the version this action ships
       with, which the release workflow checks against the tag.
     required: false
-    default: '0.7.5'
+    default: '0.7.6'
   artifact-name:
     description: Name of the uploaded artifact.
     required: false
@@ -212,6 +212,25 @@ runs:
           brew install xcbeautify || echo "::warning::xcbeautify unavailable; the build log will be verbose."
         fi
 
+    # On a pull_request event actions/checkout leaves HEAD at refs/pull/N/merge, and that
+    # merge is not always built on the sha the event reports as the base: they differed by
+    # nine commits on a stacked pull request. The merge commit's first parent is the base
+    # of the tree being rendered, so it is the only base that agrees with it. Computed
+    # here rather than at render time because the cache below keys on it, and a key that
+    # disagrees restores a base rendered from different sources.
+    - name: Resolve the base commit
+      id: base
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        SHA="${{ github.event.pull_request.base.sha }}"
+        if git rev-parse -q --verify HEAD^2 >/dev/null 2>&1; then
+          SHA="$(git rev-parse HEAD^1)"
+          echo "HEAD is a merge; comparing against its base parent $SHA"
+        fi
+        echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
     # The base is the expensive half and rarely changes within a pull request, so it is
     # cached on the merge base. Without this every push pays for two full builds.
     - name: Restore the base render
@@ -219,7 +238,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/retake/base
-        key: retake-base-${{ runner.os }}-${{ github.event.pull_request.base.sha }}-${{ inputs.simulator }}-${{ inputs.settle }}
+        key: retake-base-${{ runner.os }}-${{ steps.base.outputs.sha }}-${{ inputs.simulator }}-${{ inputs.settle }}
 
     - name: Render and compare
       id: review
@@ -233,26 +252,10 @@ runs:
         OUT="${{ runner.temp }}/retake"
         RETAKE="${{ steps.retake.outputs.bin }}"
 
-        # On a pull_request event, actions/checkout leaves HEAD at refs/pull/N/merge, a
-        # merge of the head into the base. That merge is not always built on the sha the
-        # event reports as the base: they differed by nine commits on a stacked pull
-        # request, and diffing one against the other credited another branch's changes to
-        # this one, pulling three unrelated modules into the render and reporting 28
-        # previews as removed.
-        #
-        # The merge commit's own first parent is the base of the tree being rendered, so
-        # it is the only base that agrees with it. A workflow that checks out the head
-        # directly leaves HEAD with one parent, and the reported base is right.
-        BASE="${{ github.event.pull_request.base.sha }}"
-        if git rev-parse -q --verify HEAD^2 >/dev/null 2>&1; then
-          BASE="$(git rev-parse HEAD^1)"
-          echo "HEAD is a merge; comparing against its base parent $BASE"
-        fi
-
         ARGS=(
           review
           --repo .
-          --base "$BASE"
+          --base "${{ steps.base.outputs.sha }}"
           --out "$OUT"
           --tolerance "${{ inputs.tolerance }}"
           --deployment-target "${{ inputs.deployment-target }}"
