@@ -34,7 +34,7 @@ inputs:
   ignore:
     description: Glob patterns, relative to the repository, for files that cannot affect rendering. A single unowned file otherwise widens the scope to everything.
     required: false
-    default: '.github/** *.md **/*.md docs/**'
+    default: '.github/** *.md **/*.md docs/** .gitignore Workspace.swift'
   verbose-build:
     description: Skip xcbeautify and keep the raw xcodebuild log. Verbose, but xcbeautify drops the render's own output, which is where a failure explains itself.
     required: false
@@ -56,7 +56,7 @@ inputs:
       Released version of retake to install. Defaults to the version this action ships
       with, which the release workflow checks against the tag.
     required: false
-    default: '0.7.3'
+    default: '0.7.4'
   artifact-name:
     description: Name of the uploaded artifact.
     required: false

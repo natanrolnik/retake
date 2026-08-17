@@ -89,13 +89,24 @@ public enum ScopeResolver {
             }
         }
 
-        // A manifest, an asset catalog, a resource the manifest globs in: files that
-        // belong to no target but can still change how one renders. Attributing them to
-        // the project that contains them is far closer to the truth than widening to the
-        // whole repository, which on a large graph means an hour of rendering everything.
+        // Only a manifest earns its project: it decides how those targets are built, so
+        // it can change what they draw without any of their files changing.
+        //
+        // Anything else the graph does not own is not compiled or bundled by a target,
+        // and a file nothing builds cannot move a pixel. Seeding on it was measurably
+        // wrong: a .gitignore and a Workspace.swift at the repository root put an entire
+        // app and ten modules into a render whose only real change was one leaf module.
+        // A workspace manifest is deliberately not treated as a manifest here — it lists
+        // which projects exist, not how any target builds.
         var outsideAnyProject: [String] = []
         var byProject: [String] = []
+        var notBuilt: [String] = []
         for file in unowned {
+            let name = (file as NSString).lastPathComponent
+            guard name == "Project.swift" || name == "Package.swift" else {
+                notBuilt.append(file)
+                continue
+            }
             if let siblings = graph.targetsOfProject(containing: file) {
                 seeds.formUnion(siblings)
                 byProject.append(file)
@@ -104,6 +115,13 @@ public enum ScopeResolver {
             }
         }
         var reasons: [String] = []
+        if !notBuilt.isEmpty {
+            // Said out loud rather than dropped silently, so a file that turns out to
+            // matter is visible in the log instead of missing from the report.
+            let listed = notBuilt.prefix(3).joined(separator: ", ")
+            let more = notBuilt.count > 3 ? " and \(notBuilt.count - 3) more" : ""
+            reasons.append("no target builds \(listed)\(more); it cannot change a render, so it is skipped")
+        }
         if !byProject.isEmpty {
             let listed = byProject.prefix(3).joined(separator: ", ")
             let more = byProject.count > 3 ? " and \(byProject.count - 3) more" : ""
@@ -126,7 +144,7 @@ public enum ScopeResolver {
         guard !seeds.isEmpty else {
             return Scope(
                 isEverything: false,
-                reasons: ["no changed file belongs to any target"],
+                reasons: reasons + ["no changed file belongs to any target"],
                 modules: [],
                 targets: [],
                 warnings: warnings

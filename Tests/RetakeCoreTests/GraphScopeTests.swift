@@ -155,18 +155,49 @@ struct ScopeResolverTests {
         #expect(scope.targets.count == 3)
     }
 
-    @Test("A file outside every project still widens the scope to everything")
-    func fileOutsideAnyProjectWidens() throws {
+    @Test("A file no target builds is skipped, not spread across its project")
+    func unbuiltFileIsSkipped() throws {
         let graph = try sampleGraph()
         let scope = ScopeResolver.resolve(
             graph: graph,
-            changedFiles: ["/elsewhere/Shared.swift"]
+            changedFiles: ["/repo/DesignSystem/Button.swift", "/repo/.gitignore"]
         )
 
-        // Nothing bounds what it could have changed, so the conservative answer is the
-        // only honest one.
+        // Measured on Riverside-iOS: a .gitignore and a Workspace.swift at the root put
+        // an entire app and ten modules into a render whose only real change was one
+        // leaf module. Nothing compiles them, so they cannot change a render.
+        #expect(!scope.isEverything)
+        #expect(scope.reasons.contains { $0.contains("no target builds") })
+        // App is here because it depends on DesignSystem, which did change. What the
+        // .gitignore must not do is put it there on its own.
+        #expect(scope.modules.sorted() == ["App", "DesignSystem", "FeatureKit"])
+    }
+
+    @Test("A manifest outside every project still widens the scope to everything")
+    func manifestOutsideAnyProjectWidens() throws {
+        let graph = try sampleGraph()
+        let scope = ScopeResolver.resolve(
+            graph: graph,
+            changedFiles: ["/elsewhere/Project.swift"]
+        )
+
+        // A manifest decides how targets build, and this one cannot be placed in the
+        // graph, so nothing bounds what it could have changed.
         #expect(scope.isEverything)
         #expect(scope.reasons.contains { $0.contains("no project contains") })
+    }
+
+    @Test("A source file outside every project is skipped, not widened")
+    func sourceOutsideAnyProjectIsSkipped() throws {
+        let graph = try sampleGraph()
+        let scope = ScopeResolver.resolve(
+            graph: graph,
+            changedFiles: ["/elsewhere/Shared.swift", "/repo/DesignSystem/Button.swift"]
+        )
+
+        // No target in the graph compiles it, so it cannot be part of any render.
+        #expect(!scope.isEverything)
+        #expect(scope.reasons.contains { $0.contains("no target builds") })
     }
 
     @Test("A manifest in one project does not drag in another")
@@ -227,18 +258,19 @@ struct ScopeResolverTests {
         #expect(scope.modules.contains("DesignSystem"))
     }
 
-    @Test("Excluded buildable folder files fall back to their project, not to nothing")
-    func excludedFileFallsBackToItsProject() throws {
+    @Test("A file excluded from its target's buildable folder is skipped")
+    func excludedFileIsSkipped() throws {
         let graph = try sampleGraph()
         let scope = ScopeResolver.resolve(
             graph: graph,
             changedFiles: ["/repo/Feature/Sources/Ignored.swift"]
         )
 
-        // Excluded from its target's buildable folder, so no target owns it, but it is
-        // still inside a project and cannot be silently dropped.
+        // The exclusion is the manifest saying this file is not built. Taking it at its
+        // word is the point: nothing compiles it, so it cannot change a render.
         #expect(!scope.isEverything)
-        #expect(!scope.modules.isEmpty)
+        #expect(scope.modules.isEmpty)
+        #expect(scope.reasons.contains { $0.contains("no target builds") })
     }
 }
 
