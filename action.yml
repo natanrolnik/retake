@@ -56,7 +56,7 @@ inputs:
       Released version of retake to install. Defaults to the version this action ships
       with, which the release workflow checks against the tag.
     required: false
-    default: '0.7.6'
+    default: '0.7.7'
   artifact-name:
     description: Name of the uploaded artifact.
     required: false
@@ -89,6 +89,13 @@ inputs:
     description: Base URL objects are served from with s3-url-mode cdn (a CDN or custom domain in front of the bucket).
     required: false
     default: ''
+  pr-number:
+    description: >
+      Pull request to publish under and comment on. Defaults to the one that triggered
+      the run; pass it explicitly to render a pull request from a manually dispatched
+      workflow, where there is no pull_request event to read it from.
+    required: false
+    default: ${{ github.event.pull_request.number }}
   comment:
     description: Upsert a pull request comment. Skipped automatically when the token cannot write.
     required: false
@@ -296,7 +303,7 @@ runs:
             --url-mode "${{ inputs.s3-url-mode }}"
             --presign-expires "${{ inputs.s3-presign-expires }}"
           )
-          [ -n "${{ github.event.pull_request.number }}" ] && PUBLISH+=(--pr "${{ github.event.pull_request.number }}")
+          [ -n "${{ inputs.pr-number }}" ] && PUBLISH+=(--pr "${{ inputs.pr-number }}")
           [ -n "${{ inputs.s3-endpoint }}" ] && PUBLISH+=(--endpoint "${{ inputs.s3-endpoint }}")
           [ -n "${{ inputs.s3-public-base-url }}" ] && PUBLISH+=(--public-base-url "${{ inputs.s3-public-base-url }}")
           "$RETAKE" "${PUBLISH[@]}"
@@ -369,15 +376,16 @@ runs:
     - name: Comment on the pull request
       if: >
         inputs.comment == 'true' &&
-        github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository
+        inputs.pr-number != '' &&
+        (github.event_name != 'pull_request' ||
+         github.event.pull_request.head.repo.full_name == github.repository)
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
       run: |
         "${{ steps.retake.outputs.bin }}" comment \
           --report "${{ runner.temp }}/retake/diff/report.json" \
-          --pr "${{ github.event.pull_request.number }}" \
+          --pr "${{ inputs.pr-number }}" \
           --artifact-name "${{ inputs.artifact-name }}" \
           --artifact-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 

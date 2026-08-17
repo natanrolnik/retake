@@ -25,7 +25,7 @@ to maintain, nothing added to your dependency graph.
 ## Install
 
 ```bash
-mise use -g github:natanrolnik/retake@0.7.6
+mise use -g github:natanrolnik/retake@0.7.7
 ```
 
 Or build it:
@@ -205,7 +205,7 @@ jobs:
       - uses: jdx/mise-action@v2  # retake requires Tuist, and does not install it
       - run: tuist install
 
-      - uses: natanrolnik/retake@0.7.6
+      - uses: natanrolnik/retake@0.7.7
         with:
           hosts: MyApp
 ```
@@ -232,7 +232,7 @@ an image source in a comment. Inline images need a bucket.
           role-to-assume: arn:aws:iam::<account>:role/retake-ci
           aws-region: us-east-1
 
-      - uses: natanrolnik/retake@0.7.6
+      - uses: natanrolnik/retake@0.7.7
         with:
           hosts: MyApp
           s3-bucket: my-preview-snapshots
@@ -266,6 +266,48 @@ are skipped there. The artifact and the job summary are still produced.
 | `cache-profile` | Tuist binary cache profile, so dependencies come from prebuilt binaries |
 | `simulator` | Pins the device. Omitted, retake picks the runner's newest available iPhone and prints it |
 
+### Running it only when you ask
+
+Rendering twice is expensive, and most pull requests do not touch the UI. Gate it on a
+label so it is opt-in, and allow a manual run for anything else:
+
+```yaml
+on:
+  pull_request:
+    # labeled, so adding the label starts a run on a pull request already open.
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to render
+        required: true
+
+jobs:
+  snapshots:
+    # On a pull request, only with the label. A manual run is the ask.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'Preview Snapshots')
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # A dispatched run has no pull request context, so the merge ref is fetched by
+          # number. retake reads the base from the merge commit's first parent, which is
+          # how it works on a pull_request event too.
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/pull/{0}/merge', inputs.pr) || '' }}
+
+      # …mise, tuist install…
+
+      - uses: natanrolnik/retake@0.7.7
+        with:
+          hosts: MyApp
+          # Empty on a dispatched run unless passed, and without it there is no pull
+          # request to comment on.
+          pr-number: ${{ github.event.pull_request.number || inputs.pr }}
+```
+
 ### Outputs
 
 The action reports what it found, so later steps do not have to re-read the report.
@@ -284,7 +326,7 @@ The action reports what it found, so later steps do not have to re-read the repo
 Give the step an `id` and read them:
 
 ```yaml
-      - uses: natanrolnik/retake@0.7.6
+      - uses: natanrolnik/retake@0.7.7
         id: previews
         with:
           hosts: MyApp
