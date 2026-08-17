@@ -142,6 +142,11 @@ such as caching the base render in CI.
 the result. It needs no scheme, no simulator and no base revision, and builds only the
 module that owns the file.
 
+A Claude Code skill ships this as a workflow, in
+[`.claude/skills/swiftui-previews`](.claude/skills/swiftui-previews/SKILL.md). Copy that
+directory into a repository to give an agent working there the install step, the loop, and
+the failure modes worth checking before believing a render.
+
 ```bash
 retake snapshot --repo . --files Sources/Feature/CheckoutScreen.swift --out /tmp/out
 ```
