@@ -255,7 +255,23 @@ struct Review: AsyncParsableCommand {
                     .run(["install"], at: baseProject)
             }
             let baseGraph = try graph(of: baseProject, label: "base")
-            try await render(graph: baseGraph, modules: renderedModules, out: baseSnapshots, label: "base")
+
+            // A module the pull request adds does not exist on the base, and asking a
+            // host to render it there fails the whole run rather than reporting the
+            // previews as new. Rendering only what the base actually has, and nothing at
+            // all when it has none of it, is what "these previews did not exist before"
+            // means.
+            let baseModules = try modulesPresent(in: baseGraph, of: renderedModules)
+            if renderedModules.isEmpty || !baseModules.isEmpty {
+                try await render(graph: baseGraph, modules: baseModules, out: baseSnapshots, label: "base")
+            } else {
+                print("retake: none of \(renderedModules.joined(separator: ", ")) exists on the base; every preview is new")
+                try FileManager.default.createDirectory(at: baseSnapshots, withIntermediateDirectories: true)
+                try Manifest(
+                    configuration: RenderConfiguration(platform: .ios, appearance: appearance),
+                    entries: []
+                ).write(to: baseSnapshots)
+            }
         }
 
         // The head render has to see head sources, so the checkout goes back now rather
@@ -288,6 +304,15 @@ struct Review: AsyncParsableCommand {
     }
 
     // MARK: - Steps
+
+    /// The subset of `modules` the graph declares, so a module that exists on only one
+    /// side of the comparison does not fail the render it is missing from.
+    private func modulesPresent(in graphURL: URL, of modules: [String]) throws -> [String] {
+        guard !modules.isEmpty else { return [] }
+        let graph = try TuistGraphParser.parse(contentsOf: graphURL)
+        let known = Set(graph.targets.values.map(\.productName))
+        return modules.filter { known.contains($0) }
+    }
 
     private func render(graph: URL, modules: [String], out: URL, label: String) async throws {
         print("retake: rendering \(label)")
