@@ -300,7 +300,12 @@ public enum HTMLReport {
         h1 { font-size: 22px; margin: 0 0 20px; }
         h2 { font-size: 16px; margin: 32px 0 12px; display: flex; align-items: center; gap: 8px; }
         h3 { font-size: 15px; margin: 0; font-weight: 600; }
-        code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+        code {
+          font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+          /* A preview id is a path with no spaces, so it has nowhere to wrap and runs
+             straight out of its card. */
+          overflow-wrap: anywhere;
+        }
         .count {
           font-size: 12px; font-weight: 500; color: var(--muted);
           border: 1px solid var(--line); border-radius: 99px; padding: 1px 8px;
@@ -373,7 +378,9 @@ public enum HTMLReport {
         }
         /* Catalogue: a wall of previews, each a readable thumbnail. */
         .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 20px; }
-        .tile { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+        /* min-width: 0, because a grid item defaults to min-width: auto and refuses to
+           shrink below its longest unbroken word, pushing the id past the card edge. */
+        .tile { display: flex; flex-direction: column; gap: 8px; margin: 0; min-width: 0; }
         .tile .shot {
           border: 1px solid var(--line); border-radius: 10px; background: var(--card);
           height: 300px; display: grid; place-items: center; overflow: hidden; padding: 8px;

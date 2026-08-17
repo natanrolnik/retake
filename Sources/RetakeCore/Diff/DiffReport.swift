@@ -141,6 +141,16 @@ public struct DiffReport: Codable, Sendable {
 }
 
 public extension DiffReport {
+    /// Nothing on the base to compare against: every preview shown is new.
+    ///
+    /// The before/after layout has nothing to put in the before column here, so it draws
+    /// an empty half for every preview. A grid of what was added says the same thing in a
+    /// fraction of the space.
+    var hasNothingToCompare: Bool {
+        let shown = previews.filter { $0.change != .unchanged }
+        return !shown.isEmpty && shown.allSatisfy { $0.change == .added }
+    }
+
     func write(to url: URL) throws {
         try Manifest.encoder().encode(self).write(to: url)
     }

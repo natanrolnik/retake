@@ -45,7 +45,11 @@ struct Report: AsyncParsableCommand {
             options: HTMLReport.Options(
                 title: title,
                 inlineImages: inlineImages,
-                includeUnchanged: includeUnchanged
+                includeUnchanged: includeUnchanged,
+                // With nothing on the base to compare against, the before/after layout
+                // draws an empty half for every preview. A grid says the same thing in a
+                // fraction of the space.
+                style: diffReport.hasNothingToCompare ? .catalogue : .comparison
             )
         )
 

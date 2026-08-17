@@ -154,3 +154,45 @@ struct UnstableReportTests {
         #expect(html.contains("cloneNode"))
     }
 }
+
+@Suite("Nothing to compare")
+struct NothingToCompareTests {
+    @Test("A report of only new previews has nothing to compare")
+    func allAdded() {
+        // A pull request that adds a module: the before/after layout would draw an empty
+        // half for every one of them.
+        let report = DiffReport(tolerance: 0, previews: [
+            diff("A", change: .added, headPNG: "a.png"),
+            diff("B", change: .added, headPNG: "b.png"),
+        ])
+
+        #expect(report.hasNothingToCompare)
+    }
+
+    @Test("One real change is enough to want the comparison layout")
+    func mixed() {
+        let report = DiffReport(tolerance: 0, previews: [
+            diff("A", change: .added, headPNG: "a.png"),
+            diff("B", change: .changed, basePNG: "b0.png", headPNG: "b1.png"),
+        ])
+
+        #expect(!report.hasNothingToCompare)
+    }
+
+    @Test("Unchanged previews do not count as something to compare")
+    func addedBesideUnchanged() {
+        // Unchanged entries are not shown by default, so they cannot justify a layout
+        // built for showing differences.
+        let report = DiffReport(tolerance: 0, previews: [
+            diff("A", change: .added, headPNG: "a.png"),
+            diff("B", change: .unchanged, basePNG: "b.png", headPNG: "b.png"),
+        ])
+
+        #expect(report.hasNothingToCompare)
+    }
+
+    @Test("An empty report has nothing to show, let alone compare")
+    func empty() {
+        #expect(!DiffReport(tolerance: 0, previews: []).hasNothingToCompare)
+    }
+}
