@@ -25,7 +25,7 @@ to maintain, nothing added to your dependency graph.
 ## Install
 
 ```bash
-mise use -g github:natanrolnik/retake@0.7.0
+mise use -g github:natanrolnik/retake@0.7.1
 ```
 
 Or build it:
@@ -205,7 +205,7 @@ jobs:
       - uses: jdx/mise-action@v2  # retake requires Tuist, and does not install it
       - run: tuist install
 
-      - uses: natanrolnik/retake@0.7.0
+      - uses: natanrolnik/retake@0.7.1
         with:
           hosts: MyApp
 ```
@@ -232,7 +232,7 @@ an image source in a comment. Inline images need a bucket.
           role-to-assume: arn:aws:iam::<account>:role/retake-ci
           aws-region: us-east-1
 
-      - uses: natanrolnik/retake@0.7.0
+      - uses: natanrolnik/retake@0.7.1
         with:
           hosts: MyApp
           s3-bucket: my-preview-snapshots
@@ -284,7 +284,7 @@ The action reports what it found, so later steps do not have to re-read the repo
 Give the step an `id` and read them:
 
 ```yaml
-      - uses: natanrolnik/retake@0.7.0
+      - uses: natanrolnik/retake@0.7.1
         id: previews
         with:
           hosts: MyApp

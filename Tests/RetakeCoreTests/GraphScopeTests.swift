@@ -138,17 +138,67 @@ struct ScopeResolverTests {
         #expect(scope.modules == ["App"])
     }
 
-    @Test("A file no target owns widens the scope to everything")
-    func unownedFileWidens() throws {
+    @Test("A file no target owns falls back to the project holding it")
+    func unownedFileFallsBackToItsProject() throws {
         let graph = try sampleGraph()
         let scope = ScopeResolver.resolve(
             graph: graph,
             changedFiles: ["/repo/DesignSystem/Button.swift", "/repo/Project.swift"]
         )
 
-        #expect(scope.isEverything)
+        // A manifest belongs to no target but decides how that project's targets build,
+        // so the project bounds the blast radius. Widening to the whole repository is
+        // what this avoids: on a large graph it means rendering hundreds of targets to
+        // find out a manifest moved.
+        #expect(!scope.isEverything)
         #expect(scope.reasons.contains { $0.contains("Project.swift") })
         #expect(scope.targets.count == 3)
+    }
+
+    @Test("A file outside every project still widens the scope to everything")
+    func fileOutsideAnyProjectWidens() throws {
+        let graph = try sampleGraph()
+        let scope = ScopeResolver.resolve(
+            graph: graph,
+            changedFiles: ["/elsewhere/Shared.swift"]
+        )
+
+        // Nothing bounds what it could have changed, so the conservative answer is the
+        // only honest one.
+        #expect(scope.isEverything)
+        #expect(scope.reasons.contains { $0.contains("no project contains") })
+    }
+
+    @Test("A manifest in one project does not drag in another")
+    func manifestStaysInItsProject() throws {
+        // The case this exists for: a new module added by a pull request, whose manifest
+        // no target owns, must not put an unrelated app in scope.
+        let graph = TargetGraph(
+            targets: Dictionary(uniqueKeysWithValues: [
+                TargetGraph.Target(
+                    id: .init(project: "/repo", name: "App"),
+                    productName: "App",
+                    product: "app",
+                    sources: ["/repo/App/Main.swift"],
+                    resources: []
+                ),
+                TargetGraph.Target(
+                    id: .init(project: "/repo/Features/New", name: "NewFeature"),
+                    productName: "NewFeature",
+                    product: "staticFramework",
+                    sources: ["/repo/Features/New/Sources/View.swift"],
+                    resources: []
+                ),
+            ].map { ($0.id, $0) }),
+            dependencies: [:]
+        )
+        let scope = ScopeResolver.resolve(
+            graph: graph,
+            changedFiles: ["/repo/Features/New/Project.swift"]
+        )
+
+        #expect(!scope.isEverything)
+        #expect(scope.modules == ["NewFeature"])
     }
 
     @Test("A glob keeps an unowned file from widening the scope")
@@ -177,15 +227,18 @@ struct ScopeResolverTests {
         #expect(scope.modules.contains("DesignSystem"))
     }
 
-    @Test("Excluded buildable folder files widen the scope rather than being ignored")
-    func excludedFileWidens() throws {
+    @Test("Excluded buildable folder files fall back to their project, not to nothing")
+    func excludedFileFallsBackToItsProject() throws {
         let graph = try sampleGraph()
         let scope = ScopeResolver.resolve(
             graph: graph,
             changedFiles: ["/repo/Feature/Sources/Ignored.swift"]
         )
 
-        #expect(scope.isEverything)
+        // Excluded from its target's buildable folder, so no target owns it, but it is
+        // still inside a project and cannot be silently dropped.
+        #expect(!scope.isEverything)
+        #expect(!scope.modules.isEmpty)
     }
 }
 

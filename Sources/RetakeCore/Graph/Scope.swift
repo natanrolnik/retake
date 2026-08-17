@@ -89,14 +89,36 @@ public enum ScopeResolver {
             }
         }
 
-        guard unowned.isEmpty else {
-            // A manifest, an asset catalog, a new file not yet in the graph: any of these
-            // can change rendering in ways no dependency edge describes.
-            let listed = unowned.prefix(5).joined(separator: ", ")
-            let more = unowned.count > 5 ? " and \(unowned.count - 5) more" : ""
+        // A manifest, an asset catalog, a resource the manifest globs in: files that
+        // belong to no target but can still change how one renders. Attributing them to
+        // the project that contains them is far closer to the truth than widening to the
+        // whole repository, which on a large graph means an hour of rendering everything.
+        var outsideAnyProject: [String] = []
+        var byProject: [String] = []
+        for file in unowned {
+            if let siblings = graph.targetsOfProject(containing: file) {
+                seeds.formUnion(siblings)
+                byProject.append(file)
+            } else {
+                outsideAnyProject.append(file)
+            }
+        }
+        var reasons: [String] = []
+        if !byProject.isEmpty {
+            let listed = byProject.prefix(3).joined(separator: ", ")
+            let more = byProject.count > 3 ? " and \(byProject.count - 3) more" : ""
+            reasons.append(
+                "no target owns \(listed)\(more); included the targets of the project holding them"
+            )
+        }
+
+        guard outsideAnyProject.isEmpty else {
+            // Outside every project: nothing bounds what it could have changed.
+            let listed = outsideAnyProject.prefix(5).joined(separator: ", ")
+            let more = outsideAnyProject.count > 5 ? " and \(outsideAnyProject.count - 5) more" : ""
             return everything(
                 graph: graph,
-                reasons: ["no target owns \(listed)\(more)"],
+                reasons: ["no project contains \(listed)\(more)"],
                 warnings: warnings
             )
         }
@@ -113,9 +135,12 @@ public enum ScopeResolver {
 
         let affected = graph.transitiveDependents(of: seeds)
         let seedNames = seeds.map(\.name).sorted().joined(separator: ", ")
+        reasons.append(
+            "changed files belong to \(seedNames); included those and everything depending on them"
+        )
         return Scope(
             isEverything: false,
-            reasons: ["changed files belong to \(seedNames); included those and everything depending on them"],
+            reasons: reasons,
             modules: Array(Set(affected.compactMap { graph.targets[$0]?.productName })),
             targets: Array(affected),
             warnings: warnings

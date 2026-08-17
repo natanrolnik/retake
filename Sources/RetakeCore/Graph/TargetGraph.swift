@@ -155,6 +155,25 @@ public struct TargetGraph: Sendable {
         return reached
     }
 
+    /// The targets of the project whose directory contains this file.
+    ///
+    /// A file can matter to rendering without belonging to a target: a `Project.swift`
+    /// declaring how the targets are built, a resource the manifest globs in, a file too
+    /// new to be in the graph. Attributing it to its project is far closer to the truth
+    /// than the alternative of treating every target in the repository as affected,
+    /// which on a large graph means rendering nothing useful for an hour.
+    ///
+    /// Longest matching project path wins, so a file in a nested project is not claimed
+    /// by the root one.
+    public func targetsOfProject(containing path: String) -> Set<TargetID>? {
+        let projects = Set(targets.keys.map(\.project))
+        let match = projects
+            .filter { path == $0 || path.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") }
+            .max { $0.count < $1.count }
+        guard let match else { return nil }
+        return Set(targets.keys.filter { $0.project == match })
+    }
+
     /// Maps an absolute file path to the target that compiles or bundles it.
     public func owner(ofFile path: String) -> TargetID? {
         targets.values.first { $0.owns(path) }?.id
