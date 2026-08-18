@@ -25,7 +25,7 @@ to maintain, nothing added to your dependency graph.
 ## Install
 
 ```bash
-mise use -g github:natanrolnik/retake@0.7.8
+mise use -g github:natanrolnik/retake@0.7.9
 ```
 
 Or build it:
@@ -38,6 +38,17 @@ swift build -c release --product retake
 The release tarball carries more than the binary: retake compiles its runtime, and
 SnapshotPreviews, into the project it generates, so those sources ship beside the
 executable and are found relative to it.
+
+### The agent skill
+
+If a coding agent is going to drive it, install the skill too. It teaches the agent the
+loop and the failure modes worth checking before believing a render:
+
+```bash
+npx skills add natanrolnik/retake --skill swiftui-previews
+```
+
+More on it, and on agents other than Claude Code, under [For agents](#for-agents).
 
 ## Quick start
 
@@ -143,10 +154,37 @@ such as caching the base render in CI.
 the result. It needs no scheme, no simulator and no base revision, and builds only the
 module that owns the file.
 
-A Claude Code skill ships this as a workflow, in
-[`.claude/skills/swiftui-previews`](.claude/skills/swiftui-previews/SKILL.md). Copy that
-directory into a repository to give an agent working there the install step, the loop, and
-the failure modes worth checking before believing a render.
+A skill ships this as a workflow, in
+[`.claude/skills/swiftui-previews`](.claude/skills/swiftui-previews/SKILL.md). It gives an
+agent working in a repository the install step, the loop, and the failure modes worth
+checking before believing a render.
+
+Install it with [`skills`](https://github.com/vercel-labs/skills):
+
+```bash
+npx skills add natanrolnik/retake --skill swiftui-previews
+```
+
+That asks which agents to install it for, and writes it into each one's skills directory.
+
+### Other coding agents
+
+Nothing in the skill is specific to one agent: it is a `SKILL.md` of prose and shell
+commands, and `skills` installs it for any agent it knows. Name them up front to skip the
+prompts:
+
+```bash
+npx skills add natanrolnik/retake --skill swiftui-previews -a claude-code -a cursor -y
+npx skills add natanrolnik/retake --skill swiftui-previews --agent '*' -y   # all of them
+```
+
+The one real requirement is not the skill format but the agent: **the loop only pays off
+if the agent can look at a PNG.** The whole point is reading the render rather than
+inferring it from the code, so an agent that cannot open images gets the commands and none
+of the value.
+
+Copying `.claude/skills/swiftui-previews` into a repository works too, and is the way to
+commit it so everyone working there gets it.
 
 ```bash
 retake snapshot --files Sources/Feature/CheckoutScreen.swift --out /tmp/out
@@ -211,7 +249,7 @@ jobs:
       - uses: jdx/mise-action@v2  # retake requires Tuist, and does not install it
       - run: tuist install
 
-      - uses: natanrolnik/retake@0.7.8
+      - uses: natanrolnik/retake@0.7.9
         with:
           hosts: MyApp
 ```
@@ -238,7 +276,7 @@ an image source in a comment. Inline images need a bucket.
           role-to-assume: arn:aws:iam::<account>:role/retake-ci
           aws-region: us-east-1
 
-      - uses: natanrolnik/retake@0.7.8
+      - uses: natanrolnik/retake@0.7.9
         with:
           hosts: MyApp
           s3-bucket: my-preview-snapshots
@@ -323,7 +361,7 @@ jobs:
 
       # …mise, tuist install…
 
-      - uses: natanrolnik/retake@0.7.8
+      - uses: natanrolnik/retake@0.7.9
         with:
           hosts: MyApp
           # Empty on a dispatched run unless passed, and without it there is no pull
@@ -349,7 +387,7 @@ The action reports what it found, so later steps do not have to re-read the repo
 Give the step an `id` and read them:
 
 ```yaml
-      - uses: natanrolnik/retake@0.7.8
+      - uses: natanrolnik/retake@0.7.9
         id: previews
         with:
           hosts: MyApp
