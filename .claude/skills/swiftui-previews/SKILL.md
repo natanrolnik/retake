@@ -37,7 +37,7 @@ Tuist graph or local Swift packages. Nothing is added to the repository under re
 After changing a SwiftUI file, render exactly its previews:
 
 ```bash
-retake snapshot --repo . --files Sources/Feature/CheckoutScreen.swift --out /tmp/previews
+retake snapshot --files Sources/Feature/CheckoutScreen.swift --out /tmp/previews
 ```
 
 Then **read the PNGs** in `/tmp/previews/snapshots/` — actually look at them, do not
@@ -49,7 +49,7 @@ Iterate: edit, re-render, look again.
 For a repository with no Tuist project, point at its packages instead:
 
 ```bash
-retake snapshot --repo . --packages Packages/DesignSystem --out /tmp/previews
+retake snapshot --packages Packages/DesignSystem --out /tmp/previews
 ```
 
 ## Seeing what a change did
@@ -57,7 +57,7 @@ retake snapshot --repo . --packages Packages/DesignSystem --out /tmp/previews
 To compare against another commit, rather than just look at the current state:
 
 ```bash
-retake review --repo . --base main --out /tmp/review
+retake review --base main --out /tmp/review
 open /tmp/review/report.html
 ```
 

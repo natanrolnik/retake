@@ -44,18 +44,19 @@ executable and are found relative to it.
 See what a file draws:
 
 ```bash
-retake snapshot --repo . --files Sources/DesignSystem/Button.swift --out ./out
+retake snapshot --files Sources/DesignSystem/Button.swift --out ./out
 open ./out/report.html
 ```
 
 See what a change did:
 
 ```bash
-retake review --repo . --base main --out ./out
+retake review --base main --out ./out
 open ./out/report.html
 ```
 
-Neither needs a simulator named, a module list, or a scheme.
+Neither needs a simulator named, a module list, or a scheme. `--repo` defaults to the
+current directory, so pass it only to point at a repository somewhere else.
 
 ---
 
@@ -67,9 +68,9 @@ Renders the current state and writes a catalogue: one image per preview, grouped
 module. No comparison, no base commit.
 
 ```bash
-retake snapshot --repo . --out ./out                          # everything
-retake snapshot --repo . --modules DesignSystem --out ./out   # one module
-retake snapshot --repo . --files A.swift B.swift --out ./out  # specific files
+retake snapshot --out ./out                          # everything
+retake snapshot --modules DesignSystem --out ./out   # one module
+retake snapshot --files A.swift B.swift --out ./out  # specific files
 ```
 
 `--files` works out which modules own those files, so checking one file builds one module
@@ -82,7 +83,7 @@ own, declaring those packages as dependencies, so a plain Xcode project with pac
 beside it works without changing anything:
 
 ```bash
-retake snapshot --repo . --packages Packages/DesignSystem Packages/StatusKit --out ./out
+retake snapshot --packages Packages/DesignSystem Packages/StatusKit --out ./out
 ```
 
 Previews living in the Xcode app target itself are out of reach this way, since only the
@@ -94,7 +95,7 @@ The whole loop in one command: render the merge base from a detached git worktre
 the working tree, diff, and write the report.
 
 ```bash
-retake review --repo . --base main --out ./out
+retake review --base main --out ./out
 ```
 
 With a clean tree the base is checked out in place, so both renders share one
@@ -148,7 +149,7 @@ directory into a repository to give an agent working there the install step, the
 the failure modes worth checking before believing a render.
 
 ```bash
-retake snapshot --repo . --files Sources/Feature/CheckoutScreen.swift --out /tmp/out
+retake snapshot --files Sources/Feature/CheckoutScreen.swift --out /tmp/out
 ```
 
 Everything is machine readable:

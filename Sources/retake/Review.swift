@@ -24,7 +24,7 @@ struct Review: AsyncParsableCommand {
     var base: String = "main"
 
     @Option(name: .long, help: "Repository to review.")
-    var repo: String = FileManager.default.currentDirectoryPath
+    var repo: String = "."
 
     @Option(name: .shortAndLong, help: "Directory for renders, the diff and the report.")
     var out: String

@@ -20,7 +20,7 @@ struct Snapshot: AsyncParsableCommand {
     )
 
     @Option(name: .long, help: "Repository to snapshot.")
-    var repo: String = FileManager.default.currentDirectoryPath
+    var repo: String = "."
 
     @Option(name: .shortAndLong, help: "Directory for the renders and the report.")
     var out: String
